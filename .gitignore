@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+*.egg-info/
+
+# Virtual environments (local test fallback; canonical env is Nix)
+.venv/
+venv/
+
+# Nix
+result
+result-*
+.direnv/
+
+# Local tooling (uv, standalone pythons)
+tools/
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Assembled dictionaries are release artifacts, never sources (spec §13)
+output/
+releases/
