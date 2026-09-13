@@ -149,18 +149,22 @@ def generate_all(
     start = time.monotonic()
     color = _use_color(out)
     done = 0
-    confirmed_failed = 0
+    # Entries whose batch failed count as errors immediately — they sit in
+    # the retry queue, and a later single retry moves each one back to done
+    # (success) or leaves it here (still failing). done + errors +
+    # remaining always equals total.
+    errors = 0
 
     def _paint(code: str, text: str) -> str:
         return f"\033[{code}m{text}\033[0m" if color else text
 
     def _status(label: str, ok: bool) -> None:
-        remaining = total - done - confirmed_failed
-        pct = round(100 * (done + confirmed_failed) / total) if total else 100
+        remaining = total - done - errors
+        pct = round(100 * (done + errors) / total) if total else 100
         print(
             f"{label} {'succeeded' if ok else 'FAILED'}: "
             f"{_paint(_GREEN, f'{done} processed')} / "
-            f"{_paint(_RED, f'{confirmed_failed} errors')} / "
+            f"{_paint(_RED, f'{errors} errors')} / "
             f"{_paint(_BLUE, f'{remaining} to process')} / "
             f"{total} total, "
             f"{pct}% in {_elapsed_hms(start)}",
@@ -189,6 +193,7 @@ def generate_all(
             _absorb(generate_batch(chunk, config, post=post))
         except GenerationError:
             deferred.append(chunk)
+            errors += len(chunk)
             if progress:
                 _status(f"Batch {index}/{first_pass_batches}", ok=False)
             continue
@@ -201,10 +206,10 @@ def generate_all(
             _absorb(generate_batch([item], config, post=post))
         except GenerationError:
             failed_keys.append(item.key)
-            confirmed_failed += 1
             if progress:
                 _status(f"Retry {index}/{len(singles)}", ok=False)
             continue
+        errors -= 1
         if progress:
             _status(f"Retry {index}/{len(singles)}", ok=True)
     return confident, review, tuple(failed_keys)

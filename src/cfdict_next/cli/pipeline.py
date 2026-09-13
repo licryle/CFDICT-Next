@@ -84,31 +84,23 @@ def run_pipeline(
     cfdict_path, cc_cedict_path = Path(cfdict_path), Path(cc_cedict_path)
     confident_path, review_path = Path(confident_path), Path(review_path)
 
+    def _announce(text: str) -> None:
+        if progress:
+            print(text, flush=True)
+
     try:
         cc_version = cc_version or sha256_file(cc_cedict_path)
     except OSError as exc:
         raise PipelineError("setup", f"cannot hash CC-CEDICT: {exc}") from exc
 
-    if not dry_run and not skip_generate:
+    if skip_generate:
+        gen_report = None
+        _announce("[generate] skipped (--skip-generate)")
+    else:
+        # Read-only plan first so the start line can say what the run
+        # will process; costs one extra parse, negligible next to LLM calls.
         try:
-            gen_report = generate_files(
-                cfdict_path,
-                cc_cedict_path,
-                confident_path,
-                review_path,
-                config,
-                cc_version,
-                limit=limit,
-                dry_run=False,
-                generation_date=generation_date,
-                post=post,
-                progress=progress,
-            )
-        except (ValueError, OSError, GenerationError) as exc:
-            raise PipelineError("generate", str(exc)) from exc
-    elif dry_run and not skip_generate:
-        try:
-            gen_report = generate_files(
+            pre = generate_files(
                 cfdict_path,
                 cc_cedict_path,
                 confident_path,
@@ -118,12 +110,37 @@ def run_pipeline(
                 limit=limit,
                 dry_run=True,
                 post=post,
-                progress=progress,
+                progress=False,
             )
         except (ValueError, OSError, GenerationError) as exc:
             raise PipelineError("generate", str(exc)) from exc
-    else:
-        gen_report = None
+        _announce(
+            f"[generate] start: will process {pre.plan.limited_to} of "
+            f"{pre.plan.scoped} missing entries in {pre.plan.batches} batches"
+        )
+        if dry_run:
+            gen_report = pre
+        else:
+            try:
+                gen_report = generate_files(
+                    cfdict_path,
+                    cc_cedict_path,
+                    confident_path,
+                    review_path,
+                    config,
+                    cc_version,
+                    limit=limit,
+                    dry_run=False,
+                    generation_date=generation_date,
+                    post=post,
+                    progress=progress,
+                )
+            except (ValueError, OSError, GenerationError) as exc:
+                raise PipelineError("generate", str(exc)) from exc
+            _announce(
+                f"[generate] done: {gen_report.confident_new} confident, "
+                f"{gen_report.review_new} review"
+            )
 
     if dry_run:
         # Read-only assessment of the current datasets; nothing downstream.
@@ -142,17 +159,30 @@ def run_pipeline(
             scope_markdown="",
         )
 
+    _announce("[cleanup] start")
     try:
         cleanup_report = cleanup_files(cfdict_path, confident_path, review_path)
     except (ValueError, OSError) as exc:
         raise PipelineError("cleanup", str(exc)) from exc
+    dropped = (
+        cleanup_report.confident_removed_cfdict
+        + cleanup_report.review_removed_cfdict
+        + cleanup_report.review_removed_confident
+    )
+    _announce(f"[cleanup] done: dropped {dropped}")
 
+    _announce("[validate-inputs] start")
     report, data = validate_inputs(
         cfdict_path, cc_cedict_path, confident_path, review_path
     )
     if data is None or not report.passed:
         raise PipelineError("validate-inputs", _failures(report))
+    _announce(
+        f"[validate-inputs] done: {len(data['cfdict_ids'])} CFDICT, "
+        f"{len(data['confident'])} confident, {len(data['review'])} review"
+    )
 
+    _announce("[assemble] start")
     try:
         confident_n, full_n = assemble_files(
             cfdict_path,
@@ -163,7 +193,9 @@ def run_pipeline(
         )
     except (ValueError, OSError) as exc:
         raise PipelineError("assemble", str(exc)) from exc
+    _announce(f"[assemble] done: {confident_n} confident, {full_n} full entries")
 
+    _announce("[validate-outputs] start")
     out_report = ValidationReport()
     check_outputs(
         out_confident_path,
@@ -175,7 +207,9 @@ def run_pipeline(
     )
     if not out_report.passed:
         raise PipelineError("validate-outputs", _failures(out_report))
+    _announce("[validate-outputs] done: outputs consistent")
 
+    _announce("[scope] start")
     models, prompts = collect_llm_provenance({**data["confident"], **data["review"]})
     try:
         cfdict_version = sha256_file(cfdict_path)
@@ -201,6 +235,9 @@ def run_pipeline(
             Path(scope_out).write_text(markdown, encoding="utf-8")
         except OSError as exc:
             raise PipelineError("scope", f"cannot write scope file: {exc}") from exc
+        _announce(f"[scope] done: wrote {scope_out}")
+    else:
+        _announce("[scope] done")
 
     return PipelineReport(
         dry_run=False,

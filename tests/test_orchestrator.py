@@ -327,12 +327,53 @@ def test_progress_marks_failed_batches_and_retries():
         "3 total, 67% in "
     )
     assert lines[1].startswith(
-        "Batch 2/2 FAILED: 2 processed / 0 errors / 1 to process / "
-        "3 total, 67% in "
+        "Batch 2/2 FAILED: 2 processed / 1 errors / 0 to process / "
+        "3 total, 100% in "
     )
     assert lines[2].startswith(
         "Retry 1/1 FAILED: 2 processed / 1 errors / 0 to process / "
         "3 total, 100% in "
+    )
+
+
+def test_retry_success_moves_entry_from_errors_to_done():
+    import io
+
+    good_post = fake_post_factory([])
+
+    def batch_only_post(endpoint, model, system, user, timeout_s):
+        import re
+
+        ids = re.findall(r"^\[\d+\]", user, re.M)
+        if len(ids) > 1:  # multi-entry batches always fail; singles recover
+            raise GenerationError("batch too big")
+        return good_post(endpoint, model, system, user, timeout_s)
+
+    stream = io.StringIO()
+    items = compute_missing_items(CC, set(), set())[:2]
+    confident, review, failed = generate_all(
+        items,
+        config(),
+        Provenance(cc_cedict_version="v", llm_model="m"),
+        generation_date="T",
+        post=batch_only_post,
+        stream=stream,
+    )
+    assert failed == ()
+    assert set(confident) == {"中|中|Zhong1", "國|国|Guo2"}
+    lines = stream.getvalue().splitlines()
+    assert len(lines) == 3
+    assert lines[0].startswith(
+        "Batch 1/1 FAILED: 0 processed / 2 errors / 0 to process / "
+        "2 total, 100% in "
+    )
+    assert lines[1].startswith(
+        "Retry 1/2 succeeded: 1 processed / 1 errors / 0 to process / "
+        "2 total, 100% in "
+    )
+    assert lines[2].startswith(
+        "Retry 2/2 succeeded: 2 processed / 0 errors / 0 to process / "
+        "2 total, 100% in "
     )
 
 

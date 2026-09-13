@@ -149,6 +149,34 @@ def test_skip_generate_uses_current_datasets(tmp_path):
     assert report.confident_n == 1 and report.full_n == 1  # CFDICT only
 
 
+def test_stage_announcements_name_each_stage(tmp_path, capsys):
+    paths = fixture(tmp_path)
+    report = run_pipeline(**base_kwargs(paths, scope_out=tmp_path / "scope.md"))
+    assert not report.dry_run
+    out = capsys.readouterr().out
+    assert "[generate] start: will process 2 of 2 missing entries in 1 batch" in out
+    assert "[generate] done: 2 confident, 0 review" in out
+    assert "[cleanup] start" in out and "[cleanup] done: dropped 0" in out
+    assert "[validate-inputs] start" in out and "[validate-inputs] done: " in out
+    assert "[assemble] start" in out and "[assemble] done: 3 confident, 3 full" in out
+    assert "[validate-outputs] start" in out and "[validate-outputs] done" in out
+    assert "[scope] start" in out and "[scope] done: wrote " in out
+
+
+def test_skip_generate_announces_skip(tmp_path, capsys):
+    paths = fixture(tmp_path)
+    run_pipeline(**base_kwargs(paths, skip_generate=True))
+    out = capsys.readouterr().out
+    assert "[generate] skipped (--skip-generate)" in out
+    assert "[generate] start" not in out
+
+
+def test_no_progress_silences_stages_and_batches(tmp_path, capsys):
+    paths = fixture(tmp_path)
+    run_pipeline(**base_kwargs(paths, progress=False))
+    assert capsys.readouterr().out == ""
+
+
 def test_cli_dry_run(tmp_path, capsys):
     cfdict, cc, confident_p, review_p = fixture(tmp_path)
     env = tmp_path / ".env"
