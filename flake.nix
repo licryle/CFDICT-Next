@@ -12,19 +12,22 @@
       devShells = forAllSystems (pkgs: {
         default = pkgs.mkShell {
           packages = with pkgs; [
-            python312
-            python312Packages.pytest
-            python312Packages.pyyaml
-            python312Packages.jsonschema
+            # Wrapped interpreter: plain `python312` plus separate
+            # `python312Packages.*` entries do NOT put the libs on
+            # sys.path — withPackages builds one python with them wired in.
+            (python312.withPackages (ps: with ps; [
+              pytest
+              pyyaml
+              jsonschema
+            ]))
             git
             gzip
           ];
 
-          # Importable package without installation: `import cfdict_next`
-          # works in `nix develop`, and scripts/*.py shims resolve it.
-          PYTHONPATH = "src";
-
           shellHook = ''
+            # Append, never clobber: the withPackages wrapper exports its
+            # own PYTHONPATH, and `import cfdict_next` additionally needs src.
+            export PYTHONPATH="$PWD/src:$PYTHONPATH"
             echo "CFDICT-Next dev shell — $(python3 --version)"
           '';
         };
