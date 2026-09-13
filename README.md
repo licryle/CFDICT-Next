@@ -47,29 +47,36 @@ python3 --version
 
 ### Development Workflow
 1. Make changes to source data or code
-2. Run validation: `python src/validation.py`
-3. Assemble dictionaries: `python src/assembly.py`
+2. Run validation: `python scripts/validate.py`
+3. Assemble dictionaries: `python scripts/assemble.py`
 4. Run tests: `pytest`
 
 ## Project Structure
 ```
 CFDICT-Next/
-├── data/                 # Source data (cfdict.u8, CC-CEDICT)
-├── src/                  # Python source code
+├── data/                 # Source data (cfdict.u8, confident.json, review.json, cc-cedict/)
+├── src/                  # Python library (parsers, assembly, validation, scope, cleanup, generation/)
 │   ├── parser/           # File parsers (.u8, JSON)
-│   ├── assembly/         # Dictionary assembly logic
 │   ├── generation/       # LLM generation pipeline
-│   ├── validation/       # Data validation
-│   └── scope.py          # Scope computation
-├── scripts/              # Utility scripts (cleanup, etc.)
-├── plans/                # Implementation plan
-├── docs/                 # Documentation
-├── schemas/              # JSON schemas
+│   ├── assembly.py       # Dictionary assembly logic
+│   ├── validation.py     # Data validation
+│   ├── cleanup.py        # LLM-dataset delta maintenance
+│   ├── scope.py          # Scope computation
+│   └── scope_info.py     # Release scope information
+├── scripts/              # CLI entrypoints (assemble, cleanup, generate, scope_info, validate)
+├── prompts/              # Versioned LLM prompt template + few-shot examples (used by src/generation/)
+├── examples/             # Example LLM input/output pair (see also tests)
+├── schemas/              # JSON schemas for LLM records and .u8 entries
+├── docs/                 # Specifications (llm_input_spec, llm_output_spec, workflow)
+├── plan/                 # Implementation plan + specification source (specifications.md)
 ├── tests/                # Test files
 ├── flake.nix             # Nix flake definition
 ├── .envrc                # Direnv configuration
 └── README.md             # This file
 ```
+
+Generated dictionaries (`output/`) and release notes (`scope.md`) are build
+artifacts, never committed sources (see `docs/workflow.md`).
 
 ## Release Process
 Releases are automated via GitHub Actions:
@@ -88,7 +95,8 @@ Environment variables can be set in `.envrc` or shell:
 - `LLM_PROMPT_VERSION`: Prompt version for generation
 
 ## Contributing
-See [CONTRIBUTING.md](docs/contributor_guide.md) for detailed guidelines.
+See `docs/workflow.md` for the release pipeline and `plan/specifications.md`
+for the project specification.
 
 ## License
 [Specify license here]
