@@ -1,0 +1,60 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "$id": "https://cfdict-next.example/schemas/confident.json",
+    "title": "Confident LLM Dictionary",
+    "description": "Schema for confident.json - LLM-generated French definitions that are reliable for automatic inclusion",
+    "type": "object",
+    "additionalProperties": {
+        "$ref": "#/definitions/llm_entry"
+    },
+    "definitions": {
+        "llm_entry": {
+            "type": "object",
+            "required": ["traditional", "simplified", "pinyin", "source_gloss", "french_definition", "confidence", "cc_cedict_version", "llm_model", "prompt_version", "generation_date"],
+            "properties": {
+                "traditional": {
+                    "type": "string",
+                    "description": "Traditional Chinese characters"
+                },
+                "simplified": {
+                    "type": "string",
+                    "description": "Simplified Chinese characters"
+                },
+                "pinyin": {
+                    "type": "string",
+                    "description": "Pinyin pronunciation with tone numbers"
+                },
+                "source_gloss": {
+                    "type": "string",
+                    "description": "Source CEDICT English gloss"
+                },
+                "french_definition": {
+                    "type": "string",
+                    "description": "Generated French definition"
+                },
+                "confidence": {
+                    "type": "string",
+                    "const": "confident",
+                    "description": "Confidence classification for this entry"
+                },
+                "cc_cedict_version": {
+                    "type": "string",
+                    "description": "Version of CC-CEDICT source"
+                },
+                "llm_model": {
+                    "type": "string",
+                    "description": "LLM model used for generation"
+                },
+                "prompt_version": {
+                    "type": "string",
+                    "description": "Version of the prompt used for generation"
+                },
+                "generation_date": {
+                    "type": "string",
+                    "format": "date-time",
+                    "description": "ISO 8601 date and time of generation"
+                }
+            }
+        }
+    }
+}

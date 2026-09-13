@@ -1,0 +1,38 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "$id": "https://cfdict-next.example/schemas/u8_entry.json",
+    "title": "u8 Dictionary Entry",
+    "description": "Schema for a .u8 dictionary entry",
+    "type": "object",
+    "required": ["traditional", "simplified", "definitions"],
+    "properties": {
+        "traditional": {
+            "type": "string",
+            "description": "Traditional Chinese characters",
+            "minLength": 1
+        },
+        "simplified": {
+            "type": "string",
+            "description": "Simplified Chinese characters",
+            "minLength": 1
+        },
+        "pinyin": {
+            "type": ["string", "null"],
+            "description": "Pinyin pronunciation with tone numbers",
+            "pattern": "^[A-Za-z0-9\\s\\-]*$"
+        },
+        "definitions": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            },
+            "minItems": 1,
+            "description": "List of definitions"
+        },
+        "source": {
+            "type": "string",
+            "description": "Source file or identifier"
+        }
+    },
+    "additionalProperties": false
+}
