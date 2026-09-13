@@ -1,0 +1,211 @@
+"""Tests for the generation orchestrator (Phase 5.6, spec §3, §5, §8, §14).
+
+All endpoint interaction is faked. Covers missing-scope planning,
+batching, limit truncation, dry-run purity, atomicity on batch failure,
+provenance stamping, and the CLI.
+"""
+
+import json
+
+import pytest
+
+from src.generation.config import LLMConfig
+from src.generation.orchestrator import (
+    compute_missing_items,
+    generate_all,
+    generate_files,
+    plan_generation,
+)
+from src.generation.llm import GenerationError
+from src.generation.output import Provenance
+from src.parser.u8 import DictionaryEntry
+
+
+def entry(trad, simp, pin, defs):
+    return DictionaryEntry(
+        traditional=trad, simplified=simp, pinyin=pin, definitions=tuple(defs)
+    )
+
+
+def config(**overrides):
+    args = {
+        "endpoint": "http://test:1/x",
+        "model": "m",
+        "batch_size": 2,
+        "max_retries": 0,
+        "timeout_s": 5.0,
+    }
+    args.update(overrides)
+    return LLMConfig(**args)
+
+
+CC = [
+    entry("中", "中", "Zhong1", ["middle"]),
+    entry("國", "国", "Guo2", ["country", "state"]),
+    entry("行", "行", "Xing2", ["to walk"]),
+]
+
+CFDICT_IDS = {"中|中|Zhong1"}  # 中 already authoritative
+
+
+def test_missing_items_exclude_cfdict_and_existing():
+    items = compute_missing_items(CC, CFDICT_IDS, {"行|行|Xing2"})
+    assert [i.key for i in items] == ["國|国|Guo2"]
+    assert items[0].glosses == ("country", "state")
+
+
+def test_missing_items_follow_cc_order_and_dedupe():
+    items = compute_missing_items(CC + CC, set(), set())
+    assert [i.key for i in items] == ["中|中|Zhong1", "國|国|Guo2", "行|行|Xing2"]
+
+
+def test_plan_counts_batches():
+    items = compute_missing_items(CC, set(), set())
+    plan = plan_generation(items, batch_size=2, limit=0)
+    assert (plan.scoped, plan.limited_to, plan.batches) == (3, 3, 2)
+    plan = plan_generation(items, batch_size=2, limit=2)
+    assert (plan.scoped, plan.limited_to, plan.batches) == (3, 2, 1)
+    plan = plan_generation([], batch_size=2, limit=0)
+    assert (plan.scoped, plan.limited_to, plan.batches) == (0, 0, 0)
+
+
+def fake_post_factory(calls):
+    def fake_post(endpoint, model, system, user, timeout_s):
+        calls.append(user)
+        import json as _json
+        import re
+
+        # Answer every requested id with a confident single-gloss sense set:
+        # parse ids + glosses back out of the rendered user message.
+        ids = [int(m) for m in re.findall(r"^\[(\d+)\]", user, re.M)]
+        current, objects = None, []
+        for line in user.splitlines():
+            m = re.match(r"^\[(\d+)\] (\S+)", line)
+            if m:
+                current = {"id": int(m[1]), "word": m[2], "senses": []}
+                objects.append(current)
+            g = re.match(r'^\s+-\s+"(.*)"$', line)
+            if g and current is not None:
+                current["senses"].append({"gloss": g[1], "fr": f"fr-{g[1]}"})
+        for obj in objects:
+            obj["confidence"] = "confident"
+        assert sorted(o["id"] for o in objects) == sorted(ids)
+        return {"choices": [{"message": {"content": _json.dumps(objects)}}]}
+
+    return fake_post
+
+
+def test_generate_all_batches_and_groups():
+    items = compute_missing_items(CC, set(), set())
+    calls = []
+    confident, review = generate_all(
+        items,
+        config(),
+        Provenance(cc_cedict_version="v", llm_model="m"),
+        generation_date="T",
+        post=fake_post_factory(calls),
+    )
+    assert len(calls) == 2  # 3 items, batch_size 2
+    assert set(confident) == {"中|中|Zhong1", "國|国|Guo2", "行|行|Xing2"}
+    assert review == {}
+    assert [s["source_gloss"] for s in confident["國|国|Guo2"]["senses"]] == [
+        "country",
+        "state",
+    ]
+
+
+def write(path, content):
+    path.write_text(content, encoding="utf-8")
+    return path
+
+
+def dataset_files(tmp_path, cfdict_ids_extra=frozenset()):
+    cfdict = write(tmp_path / "cfdict.u8", "中 中 [Zhong1] /milieu/\n")
+    cc = write(
+        tmp_path / "cc.u8",
+        "中 中 [Zhong1] /middle/\n"
+        "國 国 [Guo2] /country/\n"
+        "行 行 [Xing2] /to walk/\n",
+    )
+    confident_p = write(tmp_path / "confident.json", json.dumps({}))
+    review_p = write(tmp_path / "review.json", json.dumps({}))
+    return cfdict, cc, confident_p, review_p
+
+
+def test_generate_files_end_to_end(tmp_path):
+    cfdict, cc, confident_p, review_p = dataset_files(tmp_path)
+    calls = []
+    report = generate_files(
+        cfdict, cc, confident_p, review_p,
+        config(), "cc-v1", limit=0, post=fake_post_factory(calls),
+        generation_date="T",
+    )
+    assert report.plan.scoped == 2  # 國 + 行 (中 is CFDICT)
+    assert report.confident_new == 2 and report.review_new == 0
+    confident = json.loads(confident_p.read_text(encoding="utf-8"))
+    assert set(confident) == {"國|国|Guo2", "行|行|Xing2"}
+    assert confident["國|国|Guo2"]["cc_cedict_version"] == "cc-v1"
+    assert confident["國|国|Guo2"]["llm_model"] == "m"
+
+
+def test_limit_truncates_and_resumes(tmp_path):
+    cfdict, cc, confident_p, review_p = dataset_files(tmp_path)
+    calls = []
+    post = fake_post_factory(calls)
+    first = generate_files(
+        cfdict, cc, confident_p, review_p, config(), "v", limit=1, post=post,
+        generation_date="T",
+    )
+    assert first.plan.limited_to == 1 and first.confident_new == 1
+    second = generate_files(
+        cfdict, cc, confident_p, review_p, config(), "v", limit=0, post=post,
+        generation_date="T",
+    )
+    assert second.confident_new == 1  # only the remaining entry
+    confident = json.loads(confident_p.read_text(encoding="utf-8"))
+    assert set(confident) == {"國|国|Guo2", "行|行|Xing2"}
+
+
+def test_dry_run_calls_no_batches_and_writes_nothing(tmp_path):
+    cfdict, cc, confident_p, review_p = dataset_files(tmp_path)
+    before = (confident_p.read_bytes(), review_p.read_bytes())
+    calls = []
+    report = generate_files(
+        cfdict, cc, confident_p, review_p, config(), "v", dry_run=True,
+        post=fake_post_factory(calls),
+    )
+    assert calls == []
+    assert report.dry_run and report.plan.scoped == 2
+    assert (confident_p.read_bytes(), review_p.read_bytes()) == before
+
+
+def test_batch_failure_writes_nothing(tmp_path):
+    cfdict, cc, confident_p, review_p = dataset_files(tmp_path)
+
+    def bad_post(*args):
+        raise GenerationError("boom")
+
+    with pytest.raises(GenerationError, match="boom"):
+        generate_files(
+            cfdict, cc, confident_p, review_p, config(), "v", limit=0, post=bad_post
+        )
+    assert json.loads(confident_p.read_text(encoding="utf-8")) == {}
+    assert json.loads(review_p.read_text(encoding="utf-8")) == {}
+
+
+def test_cli_dry_run(tmp_path, capsys):
+    import scripts.generate as cli  # noqa: E402
+
+    cfdict, cc, confident_p, review_p = dataset_files(tmp_path)
+    env = tmp_path / ".env"
+    env.write_text(
+        "LLM_API_ENDPOINT=http://x:1/y\nLLM_MODEL_NAME=m\n", encoding="utf-8"
+    )
+    rc = cli.main(
+        ["--env", str(env), "--cfdict", str(cfdict), "--cc-cedict", str(cc),
+         "--confident", str(confident_p), "--review", str(review_p),
+         "--dry-run"]
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "dry run" in out and "2 entries in missing scope" in out
