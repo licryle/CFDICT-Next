@@ -8,7 +8,7 @@ import json
 
 import pytest
 
-from src.cleanup import (
+from cfdict_next.cleanup import (
     cfdict_identities,
     cleanup_datasets,
     cleanup_files,

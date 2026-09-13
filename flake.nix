@@ -20,6 +20,10 @@
             gzip
           ];
 
+          # Importable package without installation: `import cfdict_next`
+          # works in `nix develop`, and scripts/*.py shims resolve it.
+          PYTHONPATH = "src";
+
           shellHook = ''
             echo "CFDICT-Next dev shell — $(python3 --version)"
           '';

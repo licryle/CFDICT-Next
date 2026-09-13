@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from src.parser.json import LLMDataError, assert_gloss_coverage, load_llm_json
+from cfdict_next.parser.json import LLMDataError, assert_gloss_coverage, load_llm_json
 
 
 def make_record(**overrides):
@@ -179,7 +179,7 @@ def test_expected_confidence_rejects_crossed_verdicts(tmp_path):
 def test_cleanup_rejects_crossed_verdict_file(tmp_path):
     import json
 
-    from src.cleanup import cleanup_files
+    from cfdict_next.cleanup import cleanup_files
 
     cfdict = tmp_path / "cfdict.u8"
     cfdict.write_text("美 美 [Mei3] /beau/\n", encoding="utf-8")

@@ -1,7 +1,7 @@
 """Unit tests for scope computation (src/scope.py, spec §3, §10, §12)."""
 
-from src.identity import compute_lexical_identity
-from src.scope import (
+from cfdict_next.identity import compute_lexical_identity
+from cfdict_next.scope import (
     compute_confident_scope,
     compute_full_scope,
     compute_missing_scope,

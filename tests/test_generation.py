@@ -12,25 +12,25 @@ import json
 
 import pytest
 
-from src.generation.config import (
+from cfdict_next.generation.config import (
     ConfigError,
     LLMConfig,
     load_config,
 )
-from src.generation.llm import (
+from cfdict_next.generation.llm import (
     GenerationError,
     GenerationItem,
     Sense,
     generate_batch,
 )
-from src.generation.output import (
+from cfdict_next.generation.output import (
     Provenance,
     build_records,
     merge_records,
     write_llm_json,
 )
-from src.generation.prompt import PROMPT_VERSION, render_prompt
-from src.parser.json import load_llm_json
+from cfdict_next.generation.prompt import PROMPT_VERSION, render_prompt
+from cfdict_next.parser.json import load_llm_json
 
 
 def make_config(**overrides):
@@ -140,7 +140,7 @@ def test_prompt_version_is_pinned():
 def test_few_shot_examples_pass_the_real_validator():
     # The examples shown to the model must themselves be valid prompt /
     # response pairs — otherwise we teach the model our own mistakes.
-    from src.generation.prompt import EXAMPLE_ITEMS, EXAMPLE_OUTPUTS
+    from cfdict_next.generation.prompt import EXAMPLE_ITEMS, EXAMPLE_OUTPUTS
 
     def fake_post(endpoint, model, system, user, timeout_s):
         for item, output in zip(EXAMPLE_ITEMS, EXAMPLE_OUTPUTS):
@@ -162,8 +162,8 @@ def test_few_shot_file_is_self_consistent():
     import json
     from pathlib import Path
 
-    from src.generation import prompt as prompt_module
-    from src.identity import compute_lexical_identity
+    from cfdict_next.generation import prompt as prompt_module
+    from cfdict_next.identity import compute_lexical_identity
 
     few_shot = (
         Path(prompt_module.__file__).parent / "assets" / "few_shot_examples.json"
@@ -197,7 +197,7 @@ def test_prompt_states_label_abbreviation_rules():
 def test_few_shot_demonstrates_label_rules():
     # The model must see at least one bound-form drop, one lit. mapping,
     # and one Tw mapping in the examples it is shown.
-    from src.generation.prompt import EXAMPLE_ITEMS, EXAMPLE_OUTPUTS
+    from cfdict_next.generation.prompt import EXAMPLE_ITEMS, EXAMPLE_OUTPUTS
 
     fr_all = " / ".join(
         s["fr"] for out in EXAMPLE_OUTPUTS for s in out["senses"]
@@ -375,7 +375,7 @@ def provenance():
 
 
 def test_build_records_splits_by_confidence():
-    from src.generation.llm import GenerationResult
+    from cfdict_next.generation.llm import GenerationResult
 
     results = [
         GenerationResult(
@@ -404,7 +404,7 @@ def test_build_records_splits_by_confidence():
 
 
 def test_identical_senses_force_review():
-    from src.generation.llm import GenerationResult
+    from cfdict_next.generation.llm import GenerationResult
 
     results = [
         GenerationResult(
@@ -419,7 +419,7 @@ def test_identical_senses_force_review():
 
 
 def test_single_sense_is_not_flagged():
-    from src.generation.llm import GenerationResult
+    from cfdict_next.generation.llm import GenerationResult
 
     results = [
         GenerationResult(
@@ -440,7 +440,7 @@ def test_merge_refuses_overwrites():
 
 
 def test_write_round_trips_through_loader(tmp_path):
-    from src.generation.llm import GenerationResult
+    from cfdict_next.generation.llm import GenerationResult
 
     results = [
         GenerationResult(

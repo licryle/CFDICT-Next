@@ -9,7 +9,7 @@ Two JSON files, both mapping **lexical identity → record** (spec §15):
   dictionary (§10.2). There is intentionally **no** `review.u8` (spec §4).
 
 The identity key MUST equal the identity computed from the record's own
-`traditional`/`simplified`/`pinyin` fields; `src/parser/json.py` rejects
+`traditional`/`simplified`/`pinyin` fields; `src/cfdict_next/parser/json.py` rejects
 any mismatch instead of guessing (spec §14).
 
 ## Record layout: one record per entry, one sense per gloss
@@ -38,7 +38,7 @@ Every record MUST carry all of these fields:
 | `generation_date`   | ISO 8601 timestamp of generation                     |
 
 The formal schema is `schemas/llm_entry.json` — the single normative
-source enforced by `src/parser/json.py` (spec §14). The file schemas only
+source enforced by `src/cfdict_next/parser/json.py` (spec §14). The file schemas only
 pin their respective constant — see `schemas/confident_schema.json` and
 `schemas/review_schema.json`, both thin `$ref` wrappers around it).
 
@@ -50,7 +50,7 @@ record must **exactly equal** the CC-CEDICT gloss set for that entry.
 A record that drops a gloss, or invents one absent from CC-CEDICT, is
 **rejected** — never silently repaired (spec §14).
 
-Enforced by `src/parser/json.py::assert_gloss_coverage`, which names the
+Enforced by `src/cfdict_next/parser/json.py::assert_gloss_coverage`, which names the
 missing and/or extra glosses. The loader itself cannot run this check
 (it sees only the JSON file, not CC-CEDICT); Phase 9 wires the two
 datasets together using this single shared implementation.

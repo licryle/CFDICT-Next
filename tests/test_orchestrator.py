@@ -9,16 +9,16 @@ import json
 
 import pytest
 
-from src.generation.config import LLMConfig
-from src.generation.orchestrator import (
+from cfdict_next.generation.config import LLMConfig
+from cfdict_next.generation.orchestrator import (
     compute_missing_items,
     generate_all,
     generate_files,
     plan_generation,
 )
-from src.generation.llm import GenerationError
-from src.generation.output import Provenance
-from src.parser.u8 import DictionaryEntry
+from cfdict_next.generation.llm import GenerationError
+from cfdict_next.generation.output import Provenance
+from cfdict_next.parser.u8 import DictionaryEntry
 
 
 def entry(trad, simp, pin, defs):
@@ -194,14 +194,14 @@ def test_batch_failure_writes_nothing(tmp_path):
 
 
 def test_cli_dry_run(tmp_path, capsys):
-    import scripts.generate as cli  # noqa: E402
+    from cfdict_next.cli.generate import main as cli_main
 
     cfdict, cc, confident_p, review_p = dataset_files(tmp_path)
     env = tmp_path / ".env"
     env.write_text(
         "LLM_API_ENDPOINT=http://x:1/y\nLLM_MODEL_NAME=m\n", encoding="utf-8"
     )
-    rc = cli.main(
+    rc = cli_main(
         ["--env", str(env), "--cfdict", str(cfdict), "--cc-cedict", str(cc),
          "--confident", str(confident_p), "--review", str(review_p),
          "--dry-run"]

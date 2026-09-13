@@ -6,7 +6,7 @@ Full dictionary:           CFDICT + confident.json + review.json
 
 CC-CEDICT and CFDICT arrive as parsed lists of DictionaryEntry; the LLM
 datasets arrive as mappings of lexical identity -> record (see
-src/parser/json.load_llm_json). All four sources meet at the same
+cfdict_next.parser.json.load_llm_json). All four sources meet at the same
 lexical identity (spec §15), which is what makes the set arithmetic valid.
 """
 

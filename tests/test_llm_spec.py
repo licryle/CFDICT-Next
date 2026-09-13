@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from src.parser.json import REQUIRED_FIELDS, assert_gloss_coverage, validate_record
+from cfdict_next.parser.json import REQUIRED_FIELDS, assert_gloss_coverage, validate_record
 
 REPO = Path(__file__).resolve().parent.parent
 EXAMPLE = REPO / "tests" / "fixtures" / "llm_example.json"

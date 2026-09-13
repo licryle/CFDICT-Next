@@ -11,14 +11,14 @@ from pathlib import Path
 
 import pytest
 
-from src.assembly import (
+from cfdict_next.assembly import (
     assemble,
     assemble_files,
     format_u8_entry,
     record_to_entry,
     write_u8_file,
 )
-from src.parser.u8 import DictionaryEntry, iter_u8_lines, parse_u8_line, parse_u8_file
+from cfdict_next.parser.u8 import DictionaryEntry, iter_u8_lines, parse_u8_line, parse_u8_file
 
 REPO = Path(__file__).resolve().parent.parent
 CFDICT = REPO / "data" / "cfdict.u8"
@@ -201,13 +201,13 @@ def test_assemble_files_with_empty_llm_round_trips_cfdict(tmp_path):
 
 
 def test_cli_smoke(tmp_path, capsys):
-    import scripts.assemble as cli  # noqa: E402  (needs repo root on sys.path)
+    from cfdict_next.cli.assemble import main as cli_main
 
     c = tmp_path / "cfdict.u8"
     c.write_text("中國 中国 [Zhong1 guo2] /Chine/\n", encoding="utf-8")
     for name in ("c.json", "r.json"):
         (tmp_path / name).write_text("{}", encoding="utf-8")
-    rc = cli.main(
+    rc = cli_main(
         [
             "--cfdict", str(c),
             "--confident", str(tmp_path / "c.json"),

@@ -8,9 +8,9 @@ from pathlib import Path
 
 import pytest
 
-from src.assembly import assemble, write_u8_file
-from src.scope_info import ReleaseSources, build_scope_info
-from src.validation import (
+from cfdict_next.assembly import assemble, write_u8_file
+from cfdict_next.scope_info import ReleaseSources, build_scope_info
+from cfdict_next.validation import (
     ValidationReport,
     check_no_overlap,
     check_outputs,
@@ -147,9 +147,9 @@ def test_outputs_content_checked(tmp_path):
     report, data = validate_inputs(cfdict_p, cc_p, confident_p, review_p)
     assert report.passed
     # Assemble empty-LLM outputs and validate them end to end.
-    from src.parser.u8 import parse_u8_file
+    from cfdict_next.parser.u8 import parse_u8_file
 
-    from src.parser.json import load_llm_json
+    from cfdict_next.parser.json import load_llm_json
 
     entries, _ = parse_u8_file(cfdict_p)
     confident_entries, full_entries = assemble(entries, {}, {})
@@ -181,19 +181,19 @@ def test_output_duplicates_fail(tmp_path):
 
 
 def test_cli_exit_codes(tmp_path, capsys):
-    import scripts.validate as cli  # noqa: E402
+    from cfdict_next.cli.validate import main as cli_main
 
     paths = fixture_files(
         tmp_path, confident={BEAUTY: record_for(BEAUTY, ["beautiful"])}
     )
-    rc = cli.main(
+    rc = cli_main(
         ["--cfdict", str(paths[0]), "--cc-cedict", str(paths[1]),
          "--confident", str(paths[2]), "--review", str(paths[3])]
     )
     assert rc == 0
     assert "validation passed" in capsys.readouterr().out
     bad = fixture_files(tmp_path, cfdict="junk\n")
-    rc = cli.main(
+    rc = cli_main(
         ["--cfdict", str(bad[0]), "--cc-cedict", str(bad[1]),
          "--confident", str(bad[2]), "--review", str(bad[3])]
     )

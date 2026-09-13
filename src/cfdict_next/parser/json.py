@@ -31,7 +31,8 @@ from ..identity import compute_lexical_identity
 
 # Single normative source (spec §14): the record shape is defined once in
 # schemas/llm_entry.json and enforced here — never duplicated in code.
-SCHEMAS_DIR = Path(__file__).resolve().parent.parent.parent / "schemas"
+# (schemas/ lives at the repo root, three levels above this module.)
+SCHEMAS_DIR = Path(__file__).resolve().parent.parent.parent.parent / "schemas"
 ENTRY_SCHEMA: dict[str, Any] = json.loads(
     (SCHEMAS_DIR / "llm_entry.json").read_text(encoding="utf-8")
 )

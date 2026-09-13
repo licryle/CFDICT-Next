@@ -13,7 +13,14 @@ dev = [
     "pyyaml>=6.0",  # workflow-file tests only
 ]
 
+[project.scripts]
+cfdict-validate = "cfdict_next.cli.validate:main"
+cfdict-assemble = "cfdict_next.cli.assemble:main"
+cfdict-cleanup = "cfdict_next.cli.cleanup:main"
+cfdict-generate = "cfdict_next.cli.generate:main"
+cfdict-scope-info = "cfdict_next.cli.scope_info:main"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
-pythonpath = ["."]
+pythonpath = ["src"]

@@ -2,7 +2,7 @@
 
 import json
 
-from src.scope_info import (
+from cfdict_next.scope_info import (
     ReleaseSources,
     build_scope_info,
     collect_llm_provenance,
@@ -91,12 +91,12 @@ def test_sha256_file_pins_exact_bytes(tmp_path):
 
 
 def test_cli_on_real_data(tmp_path):
-    import scripts.scope_info as cli  # noqa: E402
+    from cfdict_next.cli.scope_info import main as cli_main
 
     for name in ("c.json", "r.json"):
         (tmp_path / name).write_text("{}", encoding="utf-8")
     out = tmp_path / "scope.md"
-    rc = cli.main(
+    rc = cli_main(
         [
             "--cfdict", "data/cfdict.u8",
             "--confident", str(tmp_path / "c.json"),
