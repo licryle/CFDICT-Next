@@ -24,3 +24,16 @@ the same library functions so the paths cannot diverge.
 - [ ] Real-data dry run works: `scripts/pipeline.py --dry-run`
 - [ ] Full suite green
 - [ ] Commit this step after human review
+
+## Step 13.2: Pipeline defaults and error surfacing (user request)
+
+- `--limit` defaults to 0 (unlimited full-scope run); `generate.py` keeps
+  its capped default 20. The summary names truncation when capped.
+- `GenerationError` from the generate stage surfaces as
+  `pipeline failed: [generate] ...` (exit 1) instead of a traceback;
+  same for `scripts/generate.py` (`generate failed: ...`).
+
+### Validation checklist
+- [x] Unit tests cover the unlimited default and staged error reporting
+- [x] Full suite green
+- [ ] Commit this step after human review

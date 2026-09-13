@@ -162,3 +162,53 @@ def test_cli_dry_run(tmp_path, capsys):
     )
     assert rc == 0
     assert "dry run" in capsys.readouterr().out
+
+
+def test_cli_limit_defaults_to_unlimited(tmp_path, monkeypatch):
+    import cfdict_next.cli.pipeline as pipeline_mod
+    from cfdict_next.cli.pipeline import PipelineReport
+
+    cfdict, cc, confident_p, review_p = fixture(tmp_path)
+    env = tmp_path / ".env"
+    env.write_text("LLM_API_ENDPOINT=http://x:1/y\nLLM_MODEL_NAME=m\n", encoding="utf-8")
+    seen = {}
+
+    def fake_run(**kwargs):
+        seen.update(kwargs)
+        return PipelineReport(
+            dry_run=True, missing_scoped=0, generated=0, confident_new=0,
+            review_new=0, cleanup=None, confident_n=0, full_n=0, scope_markdown="",
+        )
+
+    monkeypatch.setattr(pipeline_mod, "run_pipeline", fake_run)
+    rc = main(
+        ["--env", str(env), "--cfdict", str(cfdict), "--cc-cedict", str(cc),
+         "--confident", str(confident_p), "--review", str(review_p),
+         "--out-confident", str(tmp_path / "c.u8"),
+         "--out-full", str(tmp_path / "f.u8"),
+         "--scope-out", str(tmp_path / "scope.md"), "--dry-run"]
+    )
+    assert rc == 0
+    assert seen["limit"] == 0
+
+
+def test_cli_reports_generation_error_with_stage(tmp_path, capsys, monkeypatch):
+    import cfdict_next.cli.pipeline as pipeline_mod
+
+    cfdict, cc, confident_p, review_p = fixture(tmp_path)
+    env = tmp_path / ".env"
+    env.write_text("LLM_API_ENDPOINT=http://x:1/y\nLLM_MODEL_NAME=m\n", encoding="utf-8")
+
+    def failing_run(**kwargs):
+        raise pipeline_mod.PipelineError("generate", "1 entry failed after retry")
+
+    monkeypatch.setattr(pipeline_mod, "run_pipeline", failing_run)
+    rc = main(
+        ["--env", str(env), "--cfdict", str(cfdict), "--cc-cedict", str(cc),
+         "--confident", str(confident_p), "--review", str(review_p),
+         "--out-confident", str(tmp_path / "c.u8"),
+         "--out-full", str(tmp_path / "f.u8"),
+         "--scope-out", str(tmp_path / "scope.md")]
+    )
+    assert rc == 1
+    assert "[generate]" in capsys.readouterr().out

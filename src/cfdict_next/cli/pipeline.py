@@ -5,10 +5,10 @@ uses the same library functions as the individual scripts (and therefore
 the same code paths CI exercises step by step), failing fast with the
 stage name on any violation.
 
-Safety mirrors scripts/generate.py: --limit caps entries per run
-(default 20, 0 = unlimited); --dry-run plans without endpoint calls or
-writes; --skip-generate re-runs only the downstream stages over the
-current datasets.
+Safety: --limit caps entries per run (default 0 = unlimited, unlike
+scripts/generate.py whose default 20 stays capped); --dry-run plans
+without endpoint calls or writes; --skip-generate re-runs only the
+downstream stages over the current datasets.
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ from typing import Any, Callable
 from ..assembly import assemble_files
 from ..cleanup import CleanupReport, cleanup_files
 from ..generation.config import LLMConfig
+from ..generation.llm import GenerationError
 from ..generation.orchestrator import generate_files
 from ..generation.llm import post_chat_completions
 from ..scope_info import (
@@ -71,7 +72,7 @@ def run_pipeline(
     out_full_path: str | Path,
     config: LLMConfig,
     cc_version: str | None = None,
-    limit: int = 20,
+    limit: int = 0,
     dry_run: bool = False,
     skip_generate: bool = False,
     scope_out: str | Path | None = None,
@@ -101,7 +102,7 @@ def run_pipeline(
                 generation_date=generation_date,
                 post=post,
             )
-        except (ValueError, OSError) as exc:
+        except (ValueError, OSError, GenerationError) as exc:
             raise PipelineError("generate", str(exc)) from exc
     elif dry_run and not skip_generate:
         try:
@@ -116,7 +117,7 @@ def run_pipeline(
                 dry_run=True,
                 post=post,
             )
-        except (ValueError, OSError) as exc:
+        except (ValueError, OSError, GenerationError) as exc:
             raise PipelineError("generate", str(exc)) from exc
     else:
         gen_report = None
@@ -230,7 +231,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out-full", default="output/cfdict-next-full.u8")
     parser.add_argument("--cc-version", default=None)
     parser.add_argument("--batch-size", type=int, default=None)
-    parser.add_argument("--limit", type=int, default=20)
+    parser.add_argument("--limit", type=int, default=0)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--skip-generate", action="store_true")
     parser.add_argument("--scope-out", default="scope.md")
@@ -286,4 +287,9 @@ def main(argv: list[str] | None = None) -> int:
             f"cleanup dropped {dropped}, "
             f"dictionaries {report.confident_n}/{report.full_n} entries"
         )
+        if report.generated < report.missing_scoped:
+            print(
+                "scope truncated by --limit; re-run resumes the rest "
+                "(already-written entries leave the missing scope)"
+            )
     return 0

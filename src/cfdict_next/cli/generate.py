@@ -22,6 +22,7 @@ from pathlib import Path
 
 
 from ..generation.config import load_config
+from ..generation.llm import GenerationError
 from ..generation.orchestrator import generate_files
 from ..scope_info import sha256_file
 
@@ -68,7 +69,7 @@ def main(argv: list[str] | None = None) -> int:
             limit=args.limit,
             dry_run=args.dry_run,
         )
-    except (ValueError, OSError) as exc:
+    except (ValueError, OSError, GenerationError) as exc:
         print(f"generate failed: {exc}", file=sys.stderr)
         return 1
     plan = report.plan

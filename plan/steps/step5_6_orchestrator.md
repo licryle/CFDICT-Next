@@ -26,3 +26,20 @@ orchestration.
       provenance, and fail-loud batch errors — all with a fake endpoint
 - [ ] Full suite green
 - [ ] Commit this step after human review
+
+## Step 5.6.2: Resilient generation (user request)
+
+Atomic writes are replaced by incremental ones: every successful batch is
+merged and written immediately, so a later failure keeps earlier progress.
+A failed batch is retried entry-by-entry at the end of the pass (poison
+isolation); transport and validation errors are both retryable. Keys still
+failing after the retry pass raise `GenerationError` naming them — the
+successes are already on disk, so a re-run resumes exactly the failures.
+
+### Validation checklist
+- [x] `generate_all` returns `(confident, review, failed_keys)` with an
+      `on_batch` persistence hook; `generate_files` persists per batch
+- [x] Unit tests cover poison isolation, resume, transient recovery, and
+      per-batch callbacks — all with a fake endpoint
+- [x] Full suite green
+- [ ] Commit this step after human review

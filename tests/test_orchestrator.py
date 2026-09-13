@@ -98,13 +98,14 @@ def fake_post_factory(calls):
 def test_generate_all_batches_and_groups():
     items = compute_missing_items(CC, set(), set())
     calls = []
-    confident, review = generate_all(
+    confident, review, failed = generate_all(
         items,
         config(),
         Provenance(cc_cedict_version="v", llm_model="m"),
         generation_date="T",
         post=fake_post_factory(calls),
     )
+    assert failed == ()
     assert len(calls) == 2  # 3 items, batch_size 2
     assert set(confident) == {"中|中|Zhong1", "國|国|Guo2", "行|行|Xing2"}
     assert review == {}
@@ -179,18 +180,107 @@ def test_dry_run_calls_no_batches_and_writes_nothing(tmp_path):
     assert (confident_p.read_bytes(), review_p.read_bytes()) == before
 
 
-def test_batch_failure_writes_nothing(tmp_path):
+def test_total_failure_writes_nothing_and_raises(tmp_path):
     cfdict, cc, confident_p, review_p = dataset_files(tmp_path)
 
     def bad_post(*args):
         raise GenerationError("boom")
 
-    with pytest.raises(GenerationError, match="boom"):
+    with pytest.raises(GenerationError, match="2 entries failed after retry"):
         generate_files(
             cfdict, cc, confident_p, review_p, config(), "v", limit=0, post=bad_post
         )
     assert json.loads(confident_p.read_text(encoding="utf-8")) == {}
     assert json.loads(review_p.read_text(encoding="utf-8")) == {}
+
+
+def test_poison_entry_isolated_rest_written_and_reported(tmp_path):
+    # 國 always fails, even alone: its batch-mate 行 must still be written,
+    # and the error must name the poison key for resume.
+    cfdict, cc, confident_p, review_p = dataset_files(tmp_path)
+    good_post = fake_post_factory([])
+
+    def flaky_post(endpoint, model, system, user, timeout_s):
+        if "国" in user:  # simplified form of 國, poison in every attempt
+            raise GenerationError("poison")
+        return good_post(endpoint, model, system, user, timeout_s)
+
+    with pytest.raises(GenerationError, match="國\\|国\\|Guo2"):
+        generate_files(
+            cfdict, cc, confident_p, review_p, config(), "v", limit=0,
+            post=flaky_post, generation_date="T",
+        )
+    confident = json.loads(confident_p.read_text(encoding="utf-8"))
+    assert set(confident) == {"行|行|Xing2"}  # success persisted
+    # Resume skips the written entry and fails again only on the poison one.
+    with pytest.raises(GenerationError, match="國\\|国\\|Guo2"):
+        generate_files(
+            cfdict, cc, confident_p, review_p, config(), "v", limit=0,
+            post=flaky_post, generation_date="T",
+        )
+    confident = json.loads(confident_p.read_text(encoding="utf-8"))
+    assert set(confident) == {"行|行|Xing2"}
+
+
+def test_transient_failure_recovers_in_retry_pass(tmp_path):
+    cfdict, cc, confident_p, review_p = dataset_files(tmp_path)
+    calls = []
+    good_post = fake_post_factory(calls)
+    state = {"failed_once": False}
+
+    def transient_post(*args):
+        if not state["failed_once"]:
+            state["failed_once"] = True
+            raise GenerationError("blip")
+        return good_post(*args)
+
+    report = generate_files(
+        cfdict, cc, confident_p, review_p, config(), "v", limit=0,
+        post=transient_post, generation_date="T",
+    )
+    assert report.confident_new == 2
+    confident = json.loads(confident_p.read_text(encoding="utf-8"))
+    assert set(confident) == {"國|国|Guo2", "行|行|Xing2"}
+
+
+def test_on_batch_fires_per_successful_batch():
+    items = compute_missing_items(CC, set(), set())
+    seen = []
+    confident, review, failed = generate_all(
+        items,
+        config(),
+        Provenance(cc_cedict_version="v", llm_model="m"),
+        generation_date="T",
+        post=fake_post_factory([]),
+        on_batch=lambda c, r: seen.append((set(c), set(r))),
+    )
+    assert failed == ()
+    assert len(seen) == 2  # batch_size 2 over 3 items
+    assert seen[0][0] == {"中|中|Zhong1", "國|国|Guo2"}
+    assert seen[1][0] == {"行|行|Xing2"}
+
+
+def test_cli_reports_generation_error_without_traceback(tmp_path, capsys, monkeypatch):
+    import cfdict_next.cli.generate as cli_mod
+    from cfdict_next.cli.generate import main as cli_main
+
+    cfdict, cc, confident_p, review_p = dataset_files(tmp_path)
+    env = tmp_path / ".env"
+    env.write_text(
+        "LLM_API_ENDPOINT=http://x:1/y\nLLM_MODEL_NAME=m\n", encoding="utf-8"
+    )
+
+    def failing_generate(*args, **kwargs):
+        raise GenerationError("poison entry")
+
+    monkeypatch.setattr(cli_mod, "generate_files", failing_generate)
+    rc = cli_main(
+        ["--env", str(env), "--cfdict", str(cfdict), "--cc-cedict", str(cc),
+         "--confident", str(confident_p), "--review", str(review_p)]
+    )
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "generate failed" in err and "poison" in err
 
 
 def test_cli_dry_run(tmp_path, capsys):
