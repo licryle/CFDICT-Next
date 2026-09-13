@@ -22,6 +22,9 @@ the endpoint or the files.
 
 from __future__ import annotations
 
+import os
+import sys
+import time
 from dataclasses import dataclass
 from itertools import batched
 from pathlib import Path
@@ -39,6 +42,24 @@ from .llm import (
 )
 from .output import Provenance, build_records, merge_records, write_llm_json
 from .prompt import GenerationItem
+
+
+_GREEN, _RED, _BLUE = "32", "31", "34"
+
+
+def _use_color(stream: Any) -> bool:
+    """ANSI colors only on a real terminal, and never with NO_COLOR set."""
+    if os.environ.get("NO_COLOR"):
+        return False
+    return hasattr(stream, "isatty") and bool(stream.isatty())
+
+
+def _elapsed_hms(start: float) -> str:
+    """Elapsed wall-clock time since `start` (monotonic) as HH:MM:SS."""
+    seconds = int(time.monotonic() - start)
+    return (
+        f"{seconds // 3600:02d}:{(seconds % 3600) // 60:02d}:{seconds % 60:02d}"
+    )
 
 
 @dataclass(frozen=True)
@@ -104,6 +125,8 @@ def generate_all(
         [dict[str, dict[str, Any]], dict[str, dict[str, Any]]], None
     ]
     | None = None,
+    progress: bool = True,
+    stream: Any | None = None,
 ) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]], tuple[str, ...]]:
     """Generate all items in batches; return (confident, review, failed_keys).
 
@@ -114,33 +137,76 @@ def generate_all(
     only persistently failing keys land in `failed_keys`. Both transport
     and response-validation errors are retryable — `generate_batch` already
     retries each attempt up to `max_retries` before giving up on it.
+    With `progress`, one status line per completed batch attempt goes to
+    `stream` (stdout): outcome, processed/error/remaining counts, percent,
+    and elapsed HH:MM:SS.
     """
+    out = stream if stream is not None else sys.stdout
+    total = len(items)
+    first_pass_batches = (
+        (total + config.batch_size - 1) // config.batch_size if total else 0
+    )
+    start = time.monotonic()
+    color = _use_color(out)
+    done = 0
+    confirmed_failed = 0
+
+    def _paint(code: str, text: str) -> str:
+        return f"\033[{code}m{text}\033[0m" if color else text
+
+    def _status(label: str, ok: bool) -> None:
+        remaining = total - done - confirmed_failed
+        pct = round(100 * (done + confirmed_failed) / total) if total else 100
+        print(
+            f"{label} {'succeeded' if ok else 'FAILED'}: "
+            f"{_paint(_GREEN, f'{done} processed')} / "
+            f"{_paint(_RED, f'{confirmed_failed} errors')} / "
+            f"{_paint(_BLUE, f'{remaining} to process')} / "
+            f"{total} total, "
+            f"{pct}% in {_elapsed_hms(start)}",
+            file=out,
+            flush=True,
+        )
+
     confident: dict[str, dict[str, Any]] = {}
     review: dict[str, dict[str, Any]] = {}
 
     def _absorb(results: list[GenerationResult]) -> None:
+        nonlocal done
         new_confident, new_review = build_records(
             results, provenance, generation_date
         )
         confident.update(new_confident)
         review.update(new_review)
+        done += len(new_confident) + len(new_review)
         if on_batch is not None:
             on_batch(new_confident, new_review)
 
     deferred: list[list[GenerationItem]] = []
-    for chunk in batched(items, config.batch_size):
+    for index, chunk in enumerate(batched(items, config.batch_size), start=1):
         chunk = list(chunk)
         try:
             _absorb(generate_batch(chunk, config, post=post))
         except GenerationError:
             deferred.append(chunk)
+            if progress:
+                _status(f"Batch {index}/{first_pass_batches}", ok=False)
+            continue
+        if progress:
+            _status(f"Batch {index}/{first_pass_batches}", ok=True)
     failed_keys: list[str] = []
-    for chunk in deferred:
-        for item in chunk:
-            try:
-                _absorb(generate_batch([item], config, post=post))
-            except GenerationError:
-                failed_keys.append(item.key)
+    singles = [item for chunk in deferred for item in chunk]
+    for index, item in enumerate(singles, start=1):
+        try:
+            _absorb(generate_batch([item], config, post=post))
+        except GenerationError:
+            failed_keys.append(item.key)
+            confirmed_failed += 1
+            if progress:
+                _status(f"Retry {index}/{len(singles)}", ok=False)
+            continue
+        if progress:
+            _status(f"Retry {index}/{len(singles)}", ok=True)
     return confident, review, tuple(failed_keys)
 
 
@@ -155,6 +221,8 @@ def generate_files(
     dry_run: bool = False,
     generation_date: str | None = None,
     post: Callable[..., Any] = post_chat_completions,
+    progress: bool = True,
+    stream: Any | None = None,
 ) -> GenerationReport:
     """Run generation against on-disk datasets; rewrite them unless dry_run."""
     cfdict_ids = cfdict_identities(cfdict_path)
@@ -199,7 +267,8 @@ def generate_files(
         review.update(new_review)
 
     new_confident, new_review, failed_keys = generate_all(
-        limited, config, provenance, generation_date, post, on_batch=_persist
+        limited, config, provenance, generation_date, post,
+        on_batch=_persist, progress=progress, stream=stream,
     )
     if failed_keys:
         raise GenerationError(

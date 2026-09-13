@@ -40,6 +40,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--batch-size", type=int, default=None)
     parser.add_argument("--limit", type=int, default=20)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--no-progress", action="store_true")
     args = parser.parse_args(argv)
 
     if args.limit < 0:
@@ -68,6 +69,7 @@ def main(argv: list[str] | None = None) -> int:
             cc_version,
             limit=args.limit,
             dry_run=args.dry_run,
+            progress=not args.no_progress,
         )
     except (ValueError, OSError, GenerationError) as exc:
         print(f"generate failed: {exc}", file=sys.stderr)

@@ -14,8 +14,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-PROMPT_VERSION = "v2"
-TEMPLATE_NAME = "generate_fr_v2.txt"
+PROMPT_VERSION = "v3"
+TEMPLATE_NAME = "generate_fr_v3.txt"
 
 # Few-shot examples live below (EXAMPLE_ITEMS / EXAMPLE_OUTPUTS), defined
 # after GenerationItem so the examples themselves are real items the

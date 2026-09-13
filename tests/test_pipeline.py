@@ -190,6 +190,17 @@ def test_cli_limit_defaults_to_unlimited(tmp_path, monkeypatch):
     )
     assert rc == 0
     assert seen["limit"] == 0
+    assert seen["progress"] is True
+    rc = main(
+        ["--env", str(env), "--cfdict", str(cfdict), "--cc-cedict", str(cc),
+         "--confident", str(confident_p), "--review", str(review_p),
+         "--out-confident", str(tmp_path / "c.u8"),
+         "--out-full", str(tmp_path / "f.u8"),
+         "--scope-out", str(tmp_path / "scope.md"), "--dry-run",
+         "--no-progress"]
+    )
+    assert rc == 0
+    assert seen["progress"] is False
 
 
 def test_cli_reports_generation_error_with_stage(tmp_path, capsys, monkeypatch):

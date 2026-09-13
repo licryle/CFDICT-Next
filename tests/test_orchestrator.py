@@ -243,6 +243,115 @@ def test_transient_failure_recovers_in_retry_pass(tmp_path):
     assert set(confident) == {"國|国|Guo2", "行|行|Xing2"}
 
 
+def test_progress_lines_report_counts_percent_and_elapsed():
+    import io
+    import re
+
+    items = compute_missing_items(CC, set(), set())
+    stream = io.StringIO()
+    confident, review, failed = generate_all(
+        items,
+        config(),
+        Provenance(cc_cedict_version="v", llm_model="m"),
+        generation_date="T",
+        post=fake_post_factory([]),
+        stream=stream,
+    )
+    assert failed == ()
+    lines = stream.getvalue().splitlines()
+    assert len(lines) == 2  # 3 items, batch_size 2
+    assert re.fullmatch(
+        r"Batch 1/2 succeeded: 2 processed / 0 errors / 1 to process / "
+        r"3 total, 67% in \d{2}:\d{2}:\d{2}",
+        lines[0],
+    )
+    assert re.fullmatch(
+        r"Batch 2/2 succeeded: 3 processed / 0 errors / 0 to process / "
+        r"3 total, 100% in \d{2}:\d{2}:\d{2}",
+        lines[1],
+    )
+    assert "\033[" not in stream.getvalue()  # StringIO is not a tty
+
+
+def test_progress_colors_only_on_tty_without_no_color(monkeypatch):
+    import io
+
+    class TtyStream(io.StringIO):
+        def isatty(self):
+            return True
+
+    def run(stream):
+        generate_all(
+            compute_missing_items(CC, set(), set()),
+            config(),
+            Provenance(cc_cedict_version="v", llm_model="m"),
+            generation_date="T",
+            post=fake_post_factory([]),
+            stream=stream,
+        )
+        return stream.getvalue()
+
+    out = run(TtyStream())
+    assert "\033[32m2 processed\033[0m" in out
+    assert "\033[31m0 errors\033[0m" in out
+    assert "\033[34m1 to process\033[0m / 3 total" in out
+    monkeypatch.setenv("NO_COLOR", "1")
+    assert "\033[" not in run(TtyStream())
+
+
+def test_progress_marks_failed_batches_and_retries():
+    import io
+    import re
+
+    good_post = fake_post_factory([])
+
+    def poison_post(endpoint, model, system, user, timeout_s):
+        if re.search(r"^\[\d+\] 行 \(", user, re.M):
+            raise GenerationError("poison")
+        return good_post(endpoint, model, system, user, timeout_s)
+
+    stream = io.StringIO()
+    confident, review, failed = generate_all(
+        compute_missing_items(CC, set(), set()),
+        config(),
+        Provenance(cc_cedict_version="v", llm_model="m"),
+        generation_date="T",
+        post=poison_post,
+        stream=stream,
+    )
+    assert failed == ("行|行|Xing2",)
+    lines = stream.getvalue().splitlines()
+    assert len(lines) == 3
+    assert lines[0].startswith(
+        "Batch 1/2 succeeded: 2 processed / 0 errors / 1 to process / "
+        "3 total, 67% in "
+    )
+    assert lines[1].startswith(
+        "Batch 2/2 FAILED: 2 processed / 0 errors / 1 to process / "
+        "3 total, 67% in "
+    )
+    assert lines[2].startswith(
+        "Retry 1/1 FAILED: 2 processed / 1 errors / 0 to process / "
+        "3 total, 100% in "
+    )
+
+
+def test_no_progress_prints_nothing():
+    import io
+
+    stream = io.StringIO()
+    generate_all(
+        compute_missing_items(CC, set(), set()),
+        config(),
+        Provenance(cc_cedict_version="v", llm_model="m"),
+        generation_date="T",
+        post=fake_post_factory([]),
+        progress=False,
+        stream=stream,
+    )
+    assert stream.getvalue() == ""
+
+
 def test_on_batch_fires_per_successful_batch():
     items = compute_missing_items(CC, set(), set())
     seen = []

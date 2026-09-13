@@ -134,7 +134,7 @@ def test_render_lists_whole_gloss_lists_per_entry():
 
 
 def test_prompt_version_is_pinned():
-    assert PROMPT_VERSION == "v2"
+    assert PROMPT_VERSION == "v3"
 
 
 def test_few_shot_examples_pass_the_real_validator():
@@ -151,9 +151,9 @@ def test_few_shot_examples_pass_the_real_validator():
         list(EXAMPLE_ITEMS), make_config(max_retries=0), post=fake_post
     )
     confidences = [r.confidence for r in results]
-    assert confidences.count("confident") == 11
+    assert confidences.count("confident") == 12
     assert confidences.count("review") == 1
-    assert sum(len(r.senses) for r in results) == 22
+    assert sum(len(r.senses) for r in results) == 23
 
 
 def test_few_shot_file_is_self_consistent():
@@ -169,7 +169,7 @@ def test_few_shot_file_is_self_consistent():
         Path(prompt_module.__file__).parent / "assets" / "few_shot_examples.json"
     )
     raw = json.loads(few_shot.read_text(encoding="utf-8"))
-    assert len(raw) >= 11
+    assert len(raw) >= 12
     for example in raw:
         en = [s for s in example["english"].split("/") if s.strip()]
         fr = [s for s in example["fr"].split("/") if s.strip()]
@@ -190,8 +190,10 @@ def test_prompt_states_label_abbreviation_rules():
     assert 'DROP' in system
     assert '"lit. "' in system or "'lit." in system or 'lit.' in system
     assert '(Tw [X])' in system
+    assert 'KEEP it verbatim' in system or '"(Tw)"' in system
     for forbidden in ("forme fermée", "écriture littéraire", "prononcé en"):
         assert forbidden in system  # named in the FORBIDDEN list, not as usage
+    assert "à Taïwan" in system  # named in the FORBIDDEN list, not as usage
 
 
 def test_few_shot_demonstrates_label_rules():
@@ -208,9 +210,13 @@ def test_few_shot_demonstrates_label_rules():
     assert "(bound form)" in gloss_all
     assert "(literary)" in gloss_all
     assert "(Taiwan pr." in gloss_all
+    assert "(Tw) band-aid" in gloss_all  # OK绷: bare (Tw) preservation case
     assert "lit." in fr_all
     assert "(Tw [" in fr_all
-    for forbidden in ("forme fermée", "écriture littéraire", "prononcé en"):
+    assert "(Tw) pansement adhésif" in fr_all  # kept verbatim, never expanded
+    for forbidden in ("forme fermée", "écriture littéraire", "prononcé en", "(à Taïwan"):
+        # "(à Taïwan" with paren: the label expansion. Bare "à Taïwan" in
+        # running text is legitimate (cf. 小朋友 usage note) and not banned.
         assert forbidden not in fr_all
 
 

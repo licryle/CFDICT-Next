@@ -75,6 +75,7 @@ def run_pipeline(
     limit: int = 0,
     dry_run: bool = False,
     skip_generate: bool = False,
+    progress: bool = True,
     scope_out: str | Path | None = None,
     post: Callable[..., Any] = post_chat_completions,
     generation_date: str | None = None,
@@ -101,6 +102,7 @@ def run_pipeline(
                 dry_run=False,
                 generation_date=generation_date,
                 post=post,
+                progress=progress,
             )
         except (ValueError, OSError, GenerationError) as exc:
             raise PipelineError("generate", str(exc)) from exc
@@ -116,6 +118,7 @@ def run_pipeline(
                 limit=limit,
                 dry_run=True,
                 post=post,
+                progress=progress,
             )
         except (ValueError, OSError, GenerationError) as exc:
             raise PipelineError("generate", str(exc)) from exc
@@ -234,6 +237,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--limit", type=int, default=0)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--skip-generate", action="store_true")
+    parser.add_argument("--no-progress", action="store_true")
     parser.add_argument("--scope-out", default="scope.md")
     args = parser.parse_args(argv)
 
@@ -263,6 +267,7 @@ def main(argv: list[str] | None = None) -> int:
             limit=args.limit,
             dry_run=args.dry_run,
             skip_generate=args.skip_generate,
+            progress=not args.no_progress,
             scope_out=None if args.dry_run else args.scope_out,
         )
     except PipelineError as exc:
