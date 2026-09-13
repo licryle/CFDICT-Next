@@ -134,7 +134,7 @@ def test_render_lists_whole_gloss_lists_per_entry():
 
 
 def test_prompt_version_is_pinned():
-    assert PROMPT_VERSION == "v1"
+    assert PROMPT_VERSION == "v2"
 
 
 def test_few_shot_examples_pass_the_real_validator():
@@ -151,9 +151,9 @@ def test_few_shot_examples_pass_the_real_validator():
         list(EXAMPLE_ITEMS), make_config(max_retries=0), post=fake_post
     )
     confidences = [r.confidence for r in results]
-    assert confidences.count("confident") == 9
+    assert confidences.count("confident") == 11
     assert confidences.count("review") == 1
-    assert sum(len(r.senses) for r in results) == 18
+    assert sum(len(r.senses) for r in results) == 22
 
 
 def test_few_shot_file_is_self_consistent():
@@ -169,7 +169,7 @@ def test_few_shot_file_is_self_consistent():
             encoding="utf-8"
         )
     )
-    assert len(raw) >= 9
+    assert len(raw) >= 11
     for example in raw:
         en = [s for s in example["english"].split("/") if s.strip()]
         fr = [s for s in example["fr"].split("/") if s.strip()]
@@ -180,6 +180,38 @@ def test_few_shot_file_is_self_consistent():
         for e in raw
     ]
     assert len(set(keys)) == len(keys)  # no duplicate few-shot entries
+
+
+def test_prompt_states_label_abbreviation_rules():
+    # Regression test for the 行 xing2 report: verbose calques such as
+    # "(forme fermée)" / "(écriture littéraire)" instead of "lit.".
+    system, _ = render_prompt(make_items())
+    assert '(bound form)' in system
+    assert 'DROP' in system
+    assert '"lit. "' in system or "'lit." in system or 'lit.' in system
+    assert '(Tw [X])' in system
+    for forbidden in ("forme fermée", "écriture littéraire", "prononcé en"):
+        assert forbidden in system  # named in the FORBIDDEN list, not as usage
+
+
+def test_few_shot_demonstrates_label_rules():
+    # The model must see at least one bound-form drop, one lit. mapping,
+    # and one Tw mapping in the examples it is shown.
+    from src.generation.prompt import EXAMPLE_ITEMS, EXAMPLE_OUTPUTS
+
+    fr_all = " / ".join(
+        s["fr"] for out in EXAMPLE_OUTPUTS for s in out["senses"]
+    )
+    gloss_all = " / ".join(
+        s["gloss"] for out in EXAMPLE_OUTPUTS for s in out["senses"]
+    )
+    assert "(bound form)" in gloss_all
+    assert "(literary)" in gloss_all
+    assert "(Taiwan pr." in gloss_all
+    assert "lit." in fr_all
+    assert "(Tw [" in fr_all
+    for forbidden in ("forme fermée", "écriture littéraire", "prononcé en"):
+        assert forbidden not in fr_all
 
 
 # --- llm client ---

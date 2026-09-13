@@ -78,5 +78,21 @@
     "english": "to walk",
     "fr": "marcher (sens à confirmer)",
     "confidence": "review"
+  },
+  {
+    "simplified": "促",
+    "traditional": "促",
+    "pinyin": "cu4",
+    "english": "(bound form) of short duration; hasty; rapid/(literary) close by; pressed against",
+    "fr": "de courte durée; précipité; rapide/lit. tout près; pressé contre",
+    "confidence": "confident"
+  },
+  {
+    "simplified": "枕",
+    "traditional": "枕",
+    "pinyin": "zhen3",
+    "english": "(bound form) pillow/to rest one's head on (Taiwan pr. [zhen4])",
+    "fr": "oreiller/se reposer la tête sur l'oreiller (Tw [zhen4])",
+    "confidence": "confident"
   }
 ]
