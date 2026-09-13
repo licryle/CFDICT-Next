@@ -82,9 +82,10 @@ LLM generation is configured through a gitignored `.env`
 builds or tests.
 
 Pipeline order — generate → cleanup → validate → assemble → validate →
-scope (`scripts/generate.py --dry-run` plans without calling any model;
-`--limit N` caps bulk runs; assembly refuses overlapping inputs instead
-of overriding them):
+scope. One command runs it locally (`scripts/pipeline.py --dry-run`
+plans without calling any model; `--limit N` caps bulk runs, `--limit 0`
+unlocks full scope; `--skip-generate` re-runs downstream stages only).
+Assembly refuses overlapping inputs instead of overriding them:
 
 ```
 CFDICT-Next/
