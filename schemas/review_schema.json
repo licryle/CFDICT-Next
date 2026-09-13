@@ -10,7 +10,7 @@
     "definitions": {
         "llm_entry": {
             "type": "object",
-            "required": ["traditional", "simplified", "pinyin", "source_gloss", "french_definition", "confidence", "cc_cedict_version", "llm_model", "prompt_version", "generation_date"],
+            "required": ["traditional", "simplified", "pinyin", "senses", "confidence", "cc_cedict_version", "llm_model", "prompt_version", "generation_date"],
             "properties": {
                 "traditional": {
                     "type": "string",
@@ -24,13 +24,27 @@
                     "type": "string",
                     "description": "Pinyin pronunciation with tone numbers"
                 },
-                "source_gloss": {
-                    "type": "string",
-                    "description": "Source CEDICT English gloss"
-                },
-                "french_definition": {
-                    "type": "string",
-                    "description": "Generated French definition"
+                "senses": {
+                    "type": "array",
+                    "description": "One sense per CEDICT gloss; the set of source_gloss values must equal the CC-CEDICT gloss set for the entry",
+                    "minItems": 1,
+                    "items": {
+                        "type": "object",
+                        "required": ["source_gloss", "french_definition"],
+                        "properties": {
+                            "source_gloss": {
+                                "type": "string",
+                                "description": "The individual CEDICT English gloss this French definition was generated for",
+                                "minLength": 1
+                            },
+                            "french_definition": {
+                                "type": "string",
+                                "description": "Generated French definition for this gloss",
+                                "minLength": 1
+                            }
+                        },
+                        "additionalProperties": false
+                    }
                 },
                 "confidence": {
                     "type": "string",

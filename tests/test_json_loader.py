@@ -1,10 +1,10 @@
-"""Unit tests for LLM dataset loading/validation (src/parser/json.py, spec §4, §8, §14)."""
+"""Unit tests for LLM dataset loading/validation (src/parser/json.py, spec §4, §5, §8, §14, §15)."""
 
 import json
 
 import pytest
 
-from src.parser.json import LLMDataError, load_llm_json
+from src.parser.json import LLMDataError, assert_gloss_coverage, load_llm_json
 
 
 def make_record(**overrides):
@@ -12,8 +12,13 @@ def make_record(**overrides):
         "traditional": "中國",
         "simplified": "中国",
         "pinyin": "Zhong1 guo2",
-        "source_gloss": "China",
-        "french_definition": "pays d'Asie de l'Est",
+        "senses": [
+            {"source_gloss": "China", "french_definition": "pays d'Asie de l'Est"},
+            {
+                "source_gloss": "Middle Kingdom",
+                "french_definition": "nom historique de la Chine",
+            },
+        ],
         "confidence": "confident",
         "cc_cedict_version": "mdbg-2025-09-12",
         "llm_model": "test-model-v1",
@@ -34,7 +39,7 @@ def test_valid_dataset_loads(tmp_path):
     f = write_dataset(tmp_path, {"中國|中国|Zhong1 guo2": make_record()})
     data = load_llm_json(f)
     assert list(data) == ["中國|中国|Zhong1 guo2"]
-    assert data["中國|中国|Zhong1 guo2"]["french_definition"] == "pays d'Asie de l'Est"
+    assert len(data["中國|中国|Zhong1 guo2"]["senses"]) == 2
 
 
 def test_invalid_json_is_rejected(tmp_path):
@@ -81,13 +86,71 @@ def test_empty_provenance_string_rejected(tmp_path):
         load_llm_json(f)
 
 
+def test_empty_senses_rejected(tmp_path):
+    f = write_dataset(tmp_path, {"中國|中国|Zhong1 guo2": make_record(senses=[])})
+    with pytest.raises(LLMDataError, match="senses"):
+        load_llm_json(f)
+
+
+def test_sense_missing_field_rejected(tmp_path):
+    f = write_dataset(
+        tmp_path,
+        {"中國|中国|Zhong1 guo2": make_record(senses=[{"source_gloss": "China"}])},
+    )
+    with pytest.raises(LLMDataError, match="french_definition"):
+        load_llm_json(f)
+
+
+def test_duplicate_gloss_within_record_rejected(tmp_path):
+    f = write_dataset(
+        tmp_path,
+        {
+            "中國|中国|Zhong1 guo2": make_record(
+                senses=[
+                    {"source_gloss": "China", "french_definition": "pays"},
+                    {"source_gloss": "China", "french_definition": "pays (bis)"},
+                ]
+            )
+        },
+    )
+    with pytest.raises(LLMDataError, match="duplicate source_gloss"):
+        load_llm_json(f)
+
+
 def test_review_file_same_structure(tmp_path):
     f = write_dataset(
         tmp_path,
-        {"行|行|Xing2": make_record(
-            traditional="行", simplified="行", pinyin="Xing2",
-            source_gloss="to walk", confidence="review",
-        )},
+        {
+            "行|行|Xing2": make_record(
+                traditional="行",
+                simplified="行",
+                pinyin="Xing2",
+                senses=[
+                    {
+                        "source_gloss": "to walk",
+                        "french_definition": "marcher (à confirmer)",
+                    }
+                ],
+                confidence="review",
+            )
+        },
     )
     data = load_llm_json(f)
     assert data["行|行|Xing2"]["confidence"] == "review"
+
+
+def test_gloss_coverage_exact_match_accepted():
+    record = make_record()
+    assert_gloss_coverage(record, {"China", "Middle Kingdom"})  # no raise
+
+
+def test_gloss_coverage_missing_gloss_rejected():
+    record = make_record()
+    with pytest.raises(LLMDataError, match="missing French.*Cathay"):
+        assert_gloss_coverage(record, {"China", "Middle Kingdom", "Cathay"})
+
+
+def test_gloss_coverage_extra_gloss_rejected():
+    record = make_record()
+    with pytest.raises(LLMDataError, match="not in CC-CEDICT.*China"):
+        assert_gloss_coverage(record, {"Middle Kingdom"})

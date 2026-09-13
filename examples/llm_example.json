@@ -1,0 +1,54 @@
+{
+  "inputs": {
+    "中國|中国|Zhong1 guo2": {
+      "simplified": "中国",
+      "traditional": "中國",
+      "pinyin": "Zhong1 guo2",
+      "glosses": ["China", "Middle Kingdom"]
+    },
+    "行|行|Xing2": {
+      "simplified": "行",
+      "traditional": "行",
+      "pinyin": "Xing2",
+      "glosses": ["to walk"]
+    }
+  },
+  "outputs": {
+    "中國|中国|Zhong1 guo2": {
+      "traditional": "中國",
+      "simplified": "中国",
+      "pinyin": "Zhong1 guo2",
+      "senses": [
+        {
+          "source_gloss": "China",
+          "french_definition": "Chine, pays d'Asie de l'Est"
+        },
+        {
+          "source_gloss": "Middle Kingdom",
+          "french_definition": "nom historique de la Chine, l'« Empire du Milieu »"
+        }
+      ],
+      "confidence": "confident",
+      "cc_cedict_version": "mdbg-2025-09-12",
+      "llm_model": "example-model-v1",
+      "prompt_version": "p1",
+      "generation_date": "2025-09-12T00:00:00Z"
+    },
+    "行|行|Xing2": {
+      "traditional": "行",
+      "simplified": "行",
+      "pinyin": "Xing2",
+      "senses": [
+        {
+          "source_gloss": "to walk",
+          "french_definition": "marcher, se déplacer à pied"
+        }
+      ],
+      "confidence": "review",
+      "cc_cedict_version": "mdbg-2025-09-12",
+      "llm_model": "example-model-v1",
+      "prompt_version": "p1",
+      "generation_date": "2025-09-12T00:00:00Z"
+    }
+  }
+}
