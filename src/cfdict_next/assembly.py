@@ -51,12 +51,28 @@ def record_to_entry(key: str, record: dict[str, Any]) -> DictionaryEntry:
     )
 
 
-def assemble(
+CFDICT_SECTION_HEADER = (
+    "# CFDICT Authoritative entries "
+    "(from https://chine.in/mandarin/dictionnaire/CFDICT/)"
+)
+CONFIDENT_SECTION_HEADER = (
+    "# LLM-Generated entries with HIGH confidence or human reviewed"
+)
+REVIEW_SECTION_HEADER = (
+    "# LLM-Generated entries with LOW confidence or human reviewed"
+)
+
+
+def assemble_sections(
     cfdict_entries: list[DictionaryEntry],
     confident: dict[str, dict[str, Any]],
     review: dict[str, dict[str, Any]],
-) -> tuple[list[DictionaryEntry], list[DictionaryEntry]]:
-    """Assemble (confident_entries, full_entries); raise on overlaps (§14)."""
+) -> tuple[list[DictionaryEntry], list[DictionaryEntry], list[DictionaryEntry]]:
+    """Split assembly into (cfdict, confident_extra, review_extra).
+
+    Same overlap checks as `assemble`; the extra lists preserve output
+    order (CFDICT file order, then LLM-only entries sorted by identity).
+    """
     cfdict_ids = {e.lexical_id() for e in cfdict_entries}
     bad_confident = sorted(set(confident) & cfdict_ids)
     if bad_confident:
@@ -74,20 +90,47 @@ def assemble(
         record_to_entry(key, confident[key]) for key in sorted(confident)
     ]
     review_extra = [record_to_entry(key, review[key]) for key in sorted(review)]
-    confident_entries = list(cfdict_entries) + confident_extra
-    full_entries = list(cfdict_entries) + confident_extra + review_extra
-    return confident_entries, full_entries
+    return list(cfdict_entries), confident_extra, review_extra
 
 
-def write_u8_file(path: str | Path, entries: list[DictionaryEntry]) -> None:
-    """Atomically write a .u8 dictionary file (UTF-8, LF endings)."""
+def assemble(
+    cfdict_entries: list[DictionaryEntry],
+    confident: dict[str, dict[str, Any]],
+    review: dict[str, dict[str, Any]],
+) -> tuple[list[DictionaryEntry], list[DictionaryEntry]]:
+    """Assemble (confident_entries, full_entries); raise on overlaps (§14)."""
+    cfdict, confident_extra, review_extra = assemble_sections(
+        cfdict_entries, confident, review
+    )
+    return cfdict + confident_extra, cfdict + confident_extra + review_extra
+
+
+def write_sectioned_u8_file(
+    path: str | Path, sections: list[tuple[str | None, list[DictionaryEntry]]]
+) -> None:
+    """Atomically write a .u8 dictionary file (UTF-8, LF endings).
+
+    Each section is an optional `#` header plus its entries. Headers are
+    plain comments (the parser skips them), and sections without entries
+    are omitted so no header dangles at end of file.
+    """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
     with open(tmp, "w", encoding="utf-8", newline="\n") as f:
-        for entry in entries:
-            f.write(format_u8_entry(entry))
+        for header, entries in sections:
+            if not entries:
+                continue
+            if header is not None:
+                f.write(header + "\n")
+            for entry in entries:
+                f.write(format_u8_entry(entry))
     tmp.replace(path)
+
+
+def write_u8_file(path: str | Path, entries: list[DictionaryEntry]) -> None:
+    """Atomically write a .u8 dictionary file (UTF-8, LF endings)."""
+    write_sectioned_u8_file(path, [(None, entries)])
 
 
 def assemble_files(
@@ -104,10 +147,26 @@ def assemble_files(
         raise ValueError(f"cfdict.u8 has {len(errors)} malformed line(s): {preview}")
     confident = load_llm_json(confident_path, "confident")
     review = load_llm_json(review_path, "review")
-    confident_entries, full_entries = assemble(entries, confident, review)
-    write_u8_file(out_confident_path, confident_entries)
-    write_u8_file(out_full_path, full_entries)
-    return len(confident_entries), len(full_entries)
+    cfdict, confident_extra, review_extra = assemble_sections(
+        entries, confident, review
+    )
+    write_sectioned_u8_file(
+        out_confident_path,
+        [
+            (CFDICT_SECTION_HEADER, cfdict),
+            (CONFIDENT_SECTION_HEADER, confident_extra),
+        ],
+    )
+    write_sectioned_u8_file(
+        out_full_path,
+        [
+            (CFDICT_SECTION_HEADER, cfdict),
+            (CONFIDENT_SECTION_HEADER, confident_extra),
+            (REVIEW_SECTION_HEADER, review_extra),
+        ],
+    )
+    confident_n = len(cfdict) + len(confident_extra)
+    return confident_n, confident_n + len(review_extra)
 
 
 def iter_output_lines(path: str | Path):

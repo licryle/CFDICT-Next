@@ -12,10 +12,15 @@ from pathlib import Path
 import pytest
 
 from cfdict_next.assembly import (
+    CFDICT_SECTION_HEADER,
+    CONFIDENT_SECTION_HEADER,
+    REVIEW_SECTION_HEADER,
     assemble,
     assemble_files,
+    assemble_sections,
     format_u8_entry,
     record_to_entry,
+    write_sectioned_u8_file,
     write_u8_file,
 )
 from cfdict_next.parser.u8 import DictionaryEntry, iter_u8_lines, parse_u8_line, parse_u8_file
@@ -198,6 +203,57 @@ def test_assemble_files_with_empty_llm_round_trips_cfdict(tmp_path):
     assert [e.definitions for e in out_entries] == [
         e.definitions for e in source_entries
     ]
+
+
+def test_outputs_carry_section_headers_in_order(tmp_path):
+    cfdict = [entry()]
+    confident = {"美|美|Mei3": llm_record_for("美|美|Mei3")}
+    review = {"好|好|Hao3": llm_record_for("好|好|Hao3", confidence="review")}
+    c, f = tmp_path / "c.u8", tmp_path / "f.u8"
+    (tmp_path / "c.json").write_text(json.dumps(confident), encoding="utf-8")
+    (tmp_path / "r.json").write_text(json.dumps(review), encoding="utf-8")
+    (tmp_path / "cfdict.u8").write_text(
+        format_u8_entry(entry()), encoding="utf-8"
+    )
+    assemble_files(tmp_path / "cfdict.u8", tmp_path / "c.json",
+                     tmp_path / "r.json", c, f)
+    c_lines = c.read_text(encoding="utf-8").splitlines()
+    assert c_lines[0] == CFDICT_SECTION_HEADER
+    assert c_lines[2] == CONFIDENT_SECTION_HEADER
+    assert REVIEW_SECTION_HEADER not in c_lines
+    f_lines = f.read_text(encoding="utf-8").splitlines()
+    assert f_lines[0] == CFDICT_SECTION_HEADER
+    assert f_lines[2] == CONFIDENT_SECTION_HEADER
+    assert f_lines[4] == REVIEW_SECTION_HEADER
+    # Headers parse as comments: entry content is unchanged.
+    out_entries, errors = parse_u8_file(f)
+    assert errors == []
+    assert [e.lexical_id() for e in out_entries] == [
+        "中國|中国|Zhong1 guo2", "美|美|Mei3", "好|好|Hao3",
+    ]
+
+
+def test_empty_sections_omit_their_header(tmp_path):
+    out = tmp_path / "o.u8"
+    write_sectioned_u8_file(out, [
+        (CFDICT_SECTION_HEADER, [entry()]),
+        (CONFIDENT_SECTION_HEADER, []),
+        (REVIEW_SECTION_HEADER, []),
+    ])
+    lines = out.read_text(encoding="utf-8").splitlines()
+    assert lines == [CFDICT_SECTION_HEADER, format_u8_entry(entry()).strip()]
+
+
+def test_sections_match_assemble_splits():
+    cfdict = [entry()]
+    confident = {"美|美|Mei3": llm_record_for("美|美|Mei3")}
+    review = {"好|好|Hao3": llm_record_for("好|好|Hao3", confidence="review")}
+    c, ce, re_ = assemble_sections(cfdict, confident, review)
+    assert c == cfdict
+    assert [e.lexical_id() for e in ce] == ["美|美|Mei3"]
+    assert [e.lexical_id() for e in re_] == ["好|好|Hao3"]
+    flat_c, flat_f = assemble(cfdict, confident, review)
+    assert flat_c == c + ce and flat_f == c + ce + re_
 
 
 def test_cli_smoke(tmp_path, capsys):
