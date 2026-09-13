@@ -1,0 +1,200 @@
+"""Tests for validation tooling (Phase 9, spec §14).
+
+Each spec relationship gets a passing case and at least one failing case.
+"""
+
+import json
+from pathlib import Path
+
+import pytest
+
+from src.assembly import assemble, write_u8_file
+from src.scope_info import ReleaseSources, build_scope_info
+from src.validation import (
+    ValidationReport,
+    check_no_overlap,
+    check_outputs,
+    check_scope_info,
+    validate_inputs,
+)
+
+REPO = Path(__file__).resolve().parent.parent
+
+CFDICT_SAMPLE = (
+    "# sample\n"
+    "中國 中国 [Zhong1 guo2] /Chine/\n"
+    "行 行 [Xing2] /marcher/\n"
+)
+CC_SAMPLE = (
+    "# sample\n"
+    "中國 中国 [Zhong1 guo2] /China/Middle Kingdom/\n"
+    "行 行 [Xing2] /to walk/\n"
+    "美 美 [Mei3] /beautiful/\n"
+)
+
+CHINA = "中國|中国|Zhong1 guo2"
+WALK = "行|行|Xing2"
+BEAUTY = "美|美|Mei3"
+
+
+def record_for(key, glosses, confidence="confident"):
+    trad, simp, pin = key.split("|")
+    return {
+        "traditional": trad,
+        "simplified": simp,
+        "pinyin": pin,
+        "senses": [{"source_gloss": g, "french_definition": f"fr-{g}"} for g in glosses],
+        "confidence": confidence,
+        "cc_cedict_version": "v",
+        "llm_model": "m",
+        "prompt_version": "p",
+        "generation_date": "2025-01-01T00:00:00+00:00",
+    }
+
+
+def write(path, content):
+    path.write_text(content, encoding="utf-8")
+    return path
+
+
+def fixture_files(tmp_path, cc=CC_SAMPLE, cfdict=CFDICT_SAMPLE,
+                  confident=None, review=None):
+    cfdict_p = write(tmp_path / "cfdict.u8", cfdict)
+    cc_p = write(tmp_path / "cc.u8", cc)
+    confident_p = write(
+        tmp_path / "confident.json",
+        json.dumps(confident if confident is not None else {}, ensure_ascii=False),
+    )
+    review_p = write(
+        tmp_path / "review.json",
+        json.dumps(review if review is not None else {}, ensure_ascii=False),
+    )
+    return cfdict_p, cc_p, confident_p, review_p
+
+
+def test_happy_path_passes(tmp_path):
+    confident = {BEAUTY: record_for(BEAUTY, ["beautiful"])}
+    paths = fixture_files(tmp_path, confident=confident)
+    report, data = validate_inputs(*paths)
+    assert report.passed, [ (c.name, c.detail) for c in report.failures() ]
+    assert data is not None
+    assert set(data["confident"]) == {BEAUTY}
+
+
+def test_malformed_cfdict_fails(tmp_path):
+    paths = fixture_files(tmp_path, cfdict="not an entry\n")
+    report, data = validate_inputs(*paths)
+    assert not report.passed
+    assert data is None
+    assert any(c.name == "cfdict.u8 parses" and not c.passed for c in report.checks)
+
+
+def test_invalid_llm_json_fails(tmp_path):
+    cfdict_p, cc_p, _, review_p = fixture_files(tmp_path)
+    confident_p = write(tmp_path / "confident.json", "{bad")
+    report, data = validate_inputs(cfdict_p, cc_p, confident_p, review_p)
+    assert not report.passed and data is None
+
+
+def test_each_overlap_pair_fails():
+    for confident, review, cfdict_ids, name in (
+        ({CHINA: {}}, {}, {CHINA}, "CFDICT/confident"),
+        ({}, {CHINA: {}}, {CHINA}, "CFDICT/review"),
+        ({BEAUTY: {}}, {BEAUTY: {}}, set(), "confident/review"),
+    ):
+        report = ValidationReport()
+        check_no_overlap(cfdict_ids, confident, review, report)
+        assert not report.passed, name
+        assert any(c.name == f"no {name} overlap" and not c.passed for c in report.checks)
+
+
+def test_gloss_mismatch_fails(tmp_path):
+    # BEAUTY record drops nothing but the gloss text differs from CC-CEDICT.
+    confident = {BEAUTY: record_for(BEAUTY, ["pretty"])}
+    paths = fixture_files(tmp_path, confident=confident)
+    report, _ = validate_inputs(*paths)
+    assert not report.passed
+    assert any(c.name == "LLM gloss coverage" and not c.passed for c in report.checks)
+
+
+def test_llm_outside_cc_cedict_fails(tmp_path):
+    confident = {"好|好|Hao3": record_for("好|好|Hao3", ["good"])}
+    paths = fixture_files(tmp_path, confident=confident)
+    report, _ = validate_inputs(*paths)
+    assert not report.passed
+    assert any("outside CC-CEDICT scope" in c.detail for c in report.failures())
+
+
+def test_scope_info_consistency():
+    sources = ReleaseSources(
+        cc_cedict_version="v", cc_cedict_ids={"A", "B"},
+        cfdict_version="v", cfdict_ids={"A"},
+        confident_version="v", confident_ids=set(),
+        review_version="v", review_ids=set(),
+    )
+    info = build_scope_info(sources, generated_at="T")
+    report = ValidationReport()
+    check_scope_info(info, sources, report)
+    assert report.passed
+    tampered = {**info, "coverage": {**info["coverage"], "missing_scope_total": 99}}
+    report2 = ValidationReport()
+    check_scope_info(tampered, sources, report2)
+    assert not report2.passed
+
+
+def test_outputs_content_checked(tmp_path):
+    cfdict_p, cc_p, confident_p, review_p = fixture_files(tmp_path)
+    report, data = validate_inputs(cfdict_p, cc_p, confident_p, review_p)
+    assert report.passed
+    # Assemble empty-LLM outputs and validate them end to end.
+    from src.parser.u8 import parse_u8_file
+
+    from src.parser.json import load_llm_json
+
+    entries, _ = parse_u8_file(cfdict_p)
+    confident_entries, full_entries = assemble(entries, {}, {})
+    out_c, out_f = tmp_path / "c.u8", tmp_path / "f.u8"
+    write_u8_file(out_c, confident_entries)
+    write_u8_file(out_f, full_entries)
+    out_report = ValidationReport()
+    check_outputs(out_c, out_f, data["cfdict_ids"], set(), set(), out_report)
+    assert out_report.passed
+
+
+def test_output_missing_entry_fails(tmp_path):
+    out_c = write(tmp_path / "c.u8", "中國 中国 [Zhong1 guo2] /Chine/\n")
+    out_f = write(tmp_path / "f.u8", "中國 中国 [Zhong1 guo2] /Chine/\n")
+    report = ValidationReport()
+    check_outputs(out_c, out_f, {CHINA, WALK}, set(), set(), report)
+    assert not report.passed
+    assert any(c.name == "confident output content" and not c.passed for c in report.checks)
+
+
+def test_output_duplicates_fail(tmp_path):
+    line = "中國 中国 [Zhong1 guo2] /Chine/\n"
+    out_c = write(tmp_path / "c.u8", line + line)
+    out_f = write(tmp_path / "f.u8", line)
+    report = ValidationReport()
+    check_outputs(out_c, out_f, {CHINA}, set(), set(), report)
+    assert not report.passed
+    assert any("duplicates" in c.name and not c.passed for c in report.checks)
+
+
+def test_cli_exit_codes(tmp_path, capsys):
+    import scripts.validate as cli  # noqa: E402
+
+    paths = fixture_files(
+        tmp_path, confident={BEAUTY: record_for(BEAUTY, ["beautiful"])}
+    )
+    rc = cli.main(
+        ["--cfdict", str(paths[0]), "--cc-cedict", str(paths[1]),
+         "--confident", str(paths[2]), "--review", str(paths[3])]
+    )
+    assert rc == 0
+    assert "validation passed" in capsys.readouterr().out
+    bad = fixture_files(tmp_path, cfdict="junk\n")
+    rc = cli.main(
+        ["--cfdict", str(bad[0]), "--cc-cedict", str(bad[1]),
+         "--confident", str(bad[2]), "--review", str(bad[3])]
+    )
+    assert rc == 1
