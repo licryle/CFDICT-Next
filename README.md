@@ -57,19 +57,17 @@ CFDICT-Next/
 ├── data/                 # Source data (cfdict.u8, confident.json, review.json, cc-cedict/)
 ├── src/                  # Python library (parsers, assembly, validation, scope, cleanup, generation/)
 │   ├── parser/           # File parsers (.u8, JSON)
-│   ├── generation/       # LLM generation pipeline
+│   ├── generation/       # LLM generation pipeline (assets/ holds prompt template + few-shot)
 │   ├── assembly.py       # Dictionary assembly logic
 │   ├── validation.py     # Data validation
 │   ├── cleanup.py        # LLM-dataset delta maintenance
 │   ├── scope.py          # Scope computation
 │   └── scope_info.py     # Release scope information
 ├── scripts/              # CLI entrypoints (assemble, cleanup, generate, scope_info, validate)
-├── prompts/              # Versioned LLM prompt template + few-shot examples (used by src/generation/)
-├── examples/             # Example LLM input/output pair (see also tests)
 ├── schemas/              # JSON schemas for LLM records and .u8 entries
 ├── docs/                 # Specifications (llm_input_spec, llm_output_spec, workflow)
 ├── plan/                 # Implementation plan + specification source (specifications.md)
-├── tests/                # Test files
+├── tests/                # Test files (fixtures/ holds the documented LLM example pair)
 ├── flake.nix             # Nix flake definition
 ├── .envrc                # Direnv configuration
 └── README.md             # This file

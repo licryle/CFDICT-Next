@@ -162,13 +162,13 @@ def test_few_shot_file_is_self_consistent():
     import json
     from pathlib import Path
 
+    from src.generation import prompt as prompt_module
     from src.identity import compute_lexical_identity
 
-    raw = json.loads(
-        (Path(__file__).resolve().parent.parent / "prompts" / "few_shot_examples.json").read_text(
-            encoding="utf-8"
-        )
+    few_shot = (
+        Path(prompt_module.__file__).parent / "assets" / "few_shot_examples.json"
     )
+    raw = json.loads(few_shot.read_text(encoding="utf-8"))
     assert len(raw) >= 11
     for example in raw:
         en = [s for s in example["english"].split("/") if s.strip()]

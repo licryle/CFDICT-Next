@@ -84,5 +84,5 @@ The human review/promotion workflow itself is outside this specification.
 
 ## Example
 
-See `examples/llm_example.json`: one `confident` record and one `review`
+See `tests/fixtures/llm_example.json`: one `confident` record and one `review`
 record, with their generation inputs.

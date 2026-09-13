@@ -4,7 +4,7 @@ Prompts are per entry, not per gloss: one entry (with its full gloss list)
 maps to one response object (with its full sense list). This keeps senses
 differentiated and makes gloss parity checkable on the response itself.
 
-The prompt template lives in `prompts/` so the exact wording is versioned
+The prompt template lives in `src/generation/assets/` so the exact wording is versioned
 with the code (spec §16: the prompt version is part of release provenance).
 `PROMPT_VERSION` is recorded on every generated record.
 """
@@ -34,7 +34,7 @@ class GenerationItem:
 
 
 # Few-shot examples: curated user-supplied pairs in
-# prompts/few_shot_examples.json (english/fr split on "/" into glosses),
+# src/generation/assets/few_shot_examples.json (english/fr split on "/" into glosses),
 # plus a review case so the model sees every verdict used. The curated
 # pairs must satisfy gloss parity themselves — the model is shown nothing
 # the validator would reject. tests/test_generation.py enforces all this.
@@ -52,7 +52,7 @@ def _load_few_shot() -> tuple[list[GenerationItem], list[dict]]:
 
     from ..identity import compute_lexical_identity
 
-    path = Path(__file__).resolve().parent.parent.parent / "prompts" / FEW_SHOT_PATH
+    path = Path(__file__).resolve().parent / "assets" / FEW_SHOT_PATH
     raw = json.loads(path.read_text(encoding="utf-8"))
     items: list[GenerationItem] = []
     outputs: list[dict] = []
@@ -117,7 +117,7 @@ EXAMPLE_LINES = _render_example_lines()
 
 def prompt_template_path() -> Path:
     """Path of the versioned prompt template."""
-    return Path(__file__).resolve().parent.parent.parent / "prompts" / TEMPLATE_NAME
+    return Path(__file__).resolve().parent / "assets" / TEMPLATE_NAME
 
 
 def render_prompt(items: list[GenerationItem]) -> tuple[str, str]:

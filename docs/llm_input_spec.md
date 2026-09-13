@@ -86,8 +86,9 @@ Milieu »"), NOT the translation "Royaume du Milieu" standing alone without
 dictionary framing — and never just "Middle Kingdom" translated word for word
 without reference to the Chinese sense.
 
-See `examples/llm_example.json` for a complete input/output pair, and
-`docs/llm_output_spec.md` for the output record format. Note that while
-generation consumes one input per gloss, the outputs for one entry are
-grouped into a single record whose senses must cover all of the entry's
+See `tests/fixtures/llm_example.json` for a complete input/output pair, and
+`docs/llm_output_spec.md` for the output record format. Note that generation
+sends one prompt per entry carrying its full gloss list, and the outputs for
+one entry are grouped into a single record whose senses must cover all of
+the entry's
 glosses (gloss parity — see the output spec).

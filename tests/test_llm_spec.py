@@ -1,7 +1,7 @@
 """Tests for the LLM generation interface spec (plan Step 4.5, spec §5, §6, §7, §8, §15).
 
 These tests pin the contract between docs, example, schema and loader:
-the example in examples/llm_example.json must satisfy the loader's
+the example in tests/fixtures/llm_example.json must satisfy the loader's
 validation, the example's senses must exactly cover its inputs' glosses
 (gloss parity), and the schema must require exactly the provenance fields
 the loader enforces.
@@ -13,7 +13,7 @@ from pathlib import Path
 from src.parser.json import REQUIRED_FIELDS, assert_gloss_coverage, validate_record
 
 REPO = Path(__file__).resolve().parent.parent
-EXAMPLE = REPO / "examples" / "llm_example.json"
+EXAMPLE = REPO / "tests" / "fixtures" / "llm_example.json"
 SCHEMA = REPO / "schemas" / "llm_output.json"
 
 
