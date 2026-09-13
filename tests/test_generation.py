@@ -153,7 +153,7 @@ def test_few_shot_examples_pass_the_real_validator():
     confidences = [r.confidence for r in results]
     assert confidences.count("confident") == 9
     assert confidences.count("review") == 1
-    assert sum(len(r.senses) for r in results) == 17
+    assert sum(len(r.senses) for r in results) == 18
 
 
 def test_few_shot_file_is_self_consistent():
