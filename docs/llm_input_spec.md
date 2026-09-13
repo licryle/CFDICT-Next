@@ -75,8 +75,10 @@ Input:
 }
 ```
 
-The pipeline fans this out into one prompt per gloss; each prompt
-carries a single gloss as its reference context.
+Generation runs one prompt per entry carrying its full gloss list, so
+the French definitions for an entry's senses are produced together —
+differentiated and consistent — rather than in isolated per-gloss calls
+where the model could blend the senses.
 
 Acceptable output sense: a French definition of China *as the historical
 "Middle Kingdom" concept* (e.g. "nom historique de la Chine, l'« Empire du

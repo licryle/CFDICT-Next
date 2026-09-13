@@ -23,6 +23,9 @@ tools/
 *.swp
 .DS_Store
 
+# Local machine configuration (copy .env.example to .env)
+.env
+
 # Assembled dictionaries are release artifacts, never sources (spec §13)
 output/
 releases/
