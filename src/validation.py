@@ -62,9 +62,10 @@ def _parse_or_fail(path: str | Path, label: str, report: ValidationReport):
     return entries
 
 
-def _load_or_fail(path: str | Path, label: str, report: ValidationReport):
+def _load_or_fail(path: str | Path, label: str, report: ValidationReport,
+                  expected_confidence: str | None = None):
     try:
-        data = load_llm_json(path)
+        data = load_llm_json(path, expected_confidence)
     except (LLMDataError, OSError) as exc:
         report.checks.append(Check(f"{label} loads", False, str(exc)))
         return None
@@ -217,8 +218,8 @@ def validate_inputs(
     report = ValidationReport()
     cfdict_entries = _parse_or_fail(cfdict_path, "cfdict.u8", report)
     cc_entries = _parse_or_fail(cc_cedict_path, "CC-CEDICT", report)
-    confident = _load_or_fail(confident_path, "confident.json", report)
-    review = _load_or_fail(review_path, "review.json", report)
+    confident = _load_or_fail(confident_path, "confident.json", report, "confident")
+    review = _load_or_fail(review_path, "review.json", report, "review")
     if None in (cfdict_entries, cc_entries, confident, review):
         return report, None
     assert cfdict_entries is not None and cc_entries is not None

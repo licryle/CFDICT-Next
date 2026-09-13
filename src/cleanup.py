@@ -83,8 +83,8 @@ def cleanup_files(
     from .generation.output import write_llm_json
 
     cfdict_ids = cfdict_identities(cfdict_path)
-    confident = load_llm_json(confident_path)
-    review = load_llm_json(review_path)
+    confident = load_llm_json(confident_path, "confident")
+    review = load_llm_json(review_path, "review")
     confident_kept, review_kept, report = cleanup_datasets(
         cfdict_ids, confident, review
     )

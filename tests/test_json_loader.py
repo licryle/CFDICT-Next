@@ -154,3 +154,40 @@ def test_gloss_coverage_extra_gloss_rejected():
     record = make_record()
     with pytest.raises(LLMDataError, match="not in CC-CEDICT.*China"):
         assert_gloss_coverage(record, {"Middle Kingdom"})
+
+
+def test_expected_confidence_accepts_matching_verdicts(tmp_path):
+    f = write_dataset(tmp_path, {"中國|中国|Zhong1 guo2": make_record()})
+    assert list(load_llm_json(f, "confident")) == ["中國|中国|Zhong1 guo2"]
+    # No expectation: both verdicts load (back-compat for ad-hoc use).
+    mixed = {"中國|中国|Zhong1 guo2": make_record(confidence="review")}
+    g = write_dataset(tmp_path, mixed)
+    assert list(load_llm_json(g)) == ["中國|中国|Zhong1 guo2"]
+
+
+def test_expected_confidence_rejects_crossed_verdicts(tmp_path):
+    f = write_dataset(
+        tmp_path, {"中國|中国|Zhong1 guo2": make_record(confidence="review")}
+    )
+    with pytest.raises(LLMDataError, match="expected 'confident'"):
+        load_llm_json(f, "confident")
+    g = write_dataset(tmp_path, {"中國|中国|Zhong1 guo2": make_record()})
+    with pytest.raises(LLMDataError, match="expected 'review'"):
+        load_llm_json(g, "review")
+
+
+def test_cleanup_rejects_crossed_verdict_file(tmp_path):
+    import json
+
+    from src.cleanup import cleanup_files
+
+    cfdict = tmp_path / "cfdict.u8"
+    cfdict.write_text("美 美 [Mei3] /beau/\n", encoding="utf-8")
+    confident_p = write_dataset(
+        tmp_path, {"中國|中国|Zhong1 guo2": make_record(confidence="review")}
+    )
+    # write_dataset always targets confident.json; review needs its own file.
+    review_p = tmp_path / "review.json"
+    review_p.write_text("{}", encoding="utf-8")
+    with pytest.raises(LLMDataError, match="expected 'confident'"):
+        cleanup_files(cfdict, confident_p, review_p)

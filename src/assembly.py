@@ -102,8 +102,8 @@ def assemble_files(
     if errors:
         preview = "; ".join(f"line {n}: {msg}" for n, msg in errors[:5])
         raise ValueError(f"cfdict.u8 has {len(errors)} malformed line(s): {preview}")
-    confident = load_llm_json(confident_path)
-    review = load_llm_json(review_path)
+    confident = load_llm_json(confident_path, "confident")
+    review = load_llm_json(review_path, "review")
     confident_entries, full_entries = assemble(entries, confident, review)
     write_u8_file(out_confident_path, confident_entries)
     write_u8_file(out_full_path, full_entries)

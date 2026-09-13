@@ -118,8 +118,8 @@ def generate_files(
         raise ValueError(
             f"CC-CEDICT has {len(errors)} malformed line(s): {preview}"
         )
-    confident = load_llm_json(confident_path)
-    review = load_llm_json(review_path)
+    confident = load_llm_json(confident_path, "confident")
+    review = load_llm_json(review_path, "review")
 
     items = compute_missing_items(
         cc_entries, cfdict_ids, set(confident) | set(review)

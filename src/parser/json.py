@@ -105,11 +105,16 @@ def validate_record(key: str, record: Any) -> str:
     return expected_key
 
 
-def load_llm_json(path: str | Path) -> dict[str, dict[str, str]]:
+def load_llm_json(
+    path: str | Path, expected_confidence: str | None = None
+) -> dict[str, dict[str, str]]:
     """Load and fully validate an LLM dataset file.
 
     Returns the mapping identity -> record. Raises LLMDataError on any
-    structural or relationship violation (spec §14).
+    structural or relationship violation (spec §14). When
+    `expected_confidence` is given, every record's verdict must match it —
+    a `review` record inside `confident.json` (or vice versa) is rejected
+    instead of silently flowing into the wrong dictionary.
 
     Note: gloss-coverage against CC-CEDICT (`assert_gloss_coverage`) is a
     separate step — the loader sees only the JSON file, not CC-CEDICT.
@@ -129,5 +134,10 @@ def load_llm_json(path: str | Path) -> dict[str, dict[str, str]]:
         if not isinstance(key, str) or not key.strip():
             raise LLMDataError(f"{path}: identity keys must be non-empty strings")
         validate_record(key, record)
+        if expected_confidence is not None and record["confidence"] != expected_confidence:
+            raise LLMDataError(
+                f"{path}: record {key!r} has confidence "
+                f"{record['confidence']!r}, expected {expected_confidence!r}"
+            )
         validated[key] = record
     return validated

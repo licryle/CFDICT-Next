@@ -53,8 +53,8 @@ def main(argv: list[str] | None = None) -> int:
         if errors:
             preview = "; ".join(f"line {n}: {msg}" for n, msg in errors[:5])
             raise ValueError(f"CC-CEDICT has {len(errors)} malformed line(s): {preview}")
-        confident = load_llm_json(args.confident)
-        review = load_llm_json(args.review)
+        confident = load_llm_json(args.confident, "confident")
+        review = load_llm_json(args.review, "review")
     except (ValueError, OSError) as exc:
         print(f"scope info failed: {exc}", file=sys.stderr)
         return 1
