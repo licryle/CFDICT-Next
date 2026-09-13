@@ -7,6 +7,7 @@ requires-python = ">=3.12"
 [dependency-groups]
 dev = [
     "pytest>=8.0",
+    "pyyaml>=6.0",  # workflow-file tests only
 ]
 
 [tool.pytest.ini_options]

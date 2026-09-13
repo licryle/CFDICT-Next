@@ -26,8 +26,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--cfdict", default="data/cfdict.u8")
     parser.add_argument("--confident", default="data/confident.json")
     parser.add_argument("--review", default="data/review.json")
-    parser.add_argument("--out-confident", default="output/confident.u8")
-    parser.add_argument("--out-full", default="output/full.u8")
+    parser.add_argument("--out-confident", default="output/cfdict-next-confident.u8")
+    parser.add_argument("--out-full", default="output/cfdict-next-full.u8")
     args = parser.parse_args(argv)
 
     try:
