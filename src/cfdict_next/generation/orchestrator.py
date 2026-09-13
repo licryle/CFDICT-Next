@@ -7,10 +7,10 @@ Orchestrates the Phase 5 pipeline end to end over real sources:
    with its full CC-CEDICT gloss list.
 3. Generate in batches; every successful batch is merged and written
    immediately, so a later failure never discards earlier progress.
-4. A failed batch is retried entry-by-entry at the end of the pass, which
-   isolates the poison entry: its batch-mates succeed, only the persistently
-   failing keys are reported. Transport and validation errors are both
-   retryable; keys still failing after the retry pass raise GenerationError
+4. A bogus entry never sinks its batch: good entries are written at once
+   and only the bad ones defer to a retry pass that runs each alone
+   (poison isolation). Transport and envelope failures still retry the
+   whole batch; keys failing after the retry pass raise GenerationError
    (successes are already on disk, so a re-run resumes the rest).
 5. Stamp provenance, split by confidence, merge into the existing files
    (key collisions refused), rewrite atomically per write.
@@ -167,16 +167,15 @@ def generate_all(
     def _paint(code: str, text: str) -> str:
         return f"\033[{code}m{text}\033[0m" if color else text
 
-    def _status(label: str, ok: bool, reason: str | None = None) -> None:
+    def _status(label: str, state: str, reason: str | None = None) -> None:
         # Timestamp leads, counts stay in fixed position, and the failure
         # cause trails at the end so it never breaks the readable prefix.
         stamp = time.strftime("%H:%M:%S", time.localtime())
-        outcome = "succeeded" if ok else "FAILED"
         remaining = total - done - errors
         pct = round(100 * (done + errors) / total) if total else 100
         tail = f" — {reason}" if reason else ""
         print(
-            f"[{stamp}] {label} {outcome}: "
+            f"[{stamp}] {label} {state}: "
             f"{_paint(_GREEN, f'{done} processed')} / "
             f"{_paint(_RED, f'{errors} errors')} / "
             f"{_paint(_BLUE, f'{remaining} to process')} / "
@@ -200,40 +199,53 @@ def generate_all(
         if on_batch is not None:
             on_batch(new_confident, new_review)
 
-    deferred: list[list[GenerationItem]] = []
+    deferred: list[GenerationItem] = []
     for index, chunk in enumerate(batched(items, config.batch_size), start=1):
         chunk = list(chunk)
+        label = f"Batch {index}/{first_pass_batches}"
         try:
-            _absorb(generate_batch(chunk, config, post=post))
+            outcome = generate_batch(chunk, config, post=post)
         except GenerationError as exc:
-            deferred.append(chunk)
+            # Transport/envelope failure: nothing salvageable, defer all.
+            deferred.extend(chunk)
             errors += len(chunk)
             if progress:
-                _status(
-                    f"Batch {index}/{first_pass_batches}", ok=False,
-                    reason=_short_error(exc),
-                )
+                _status(label, "FAILED", reason=_short_error(exc))
             continue
-        if progress:
-            _status(f"Batch {index}/{first_pass_batches}", ok=True)
+        _absorb(outcome.results)
+        if outcome.failed:
+            # Bogus entries defer alone; batch-mates are already written.
+            deferred.extend(outcome.failed)
+            errors += len(outcome.failed)
+            if progress:
+                first = outcome.failed[0]
+                _status(
+                    label, "PARTIAL",
+                    reason=(
+                        f"{len(outcome.failed)} deferred, e.g. "
+                        f"{first.key}: "
+                        f"{_short_error(outcome.causes[first.key])}"
+                    ),
+                )
+        elif progress:
+            _status(label, "succeeded")
     failed_keys: list[str] = []
     causes: dict[str, str] = {}
-    singles = [item for chunk in deferred for item in chunk]
-    for index, item in enumerate(singles, start=1):
+    for index, item in enumerate(deferred, start=1):
         try:
-            _absorb(generate_batch([item], config, post=post))
+            _absorb(generate_batch([item], config, post=post).results)
         except GenerationError as exc:
             failed_keys.append(item.key)
             causes[item.key] = _short_error(exc)
             if progress:
                 _status(
-                    f"Retry {index}/{len(singles)}", ok=False,
+                    f"Retry {index}/{len(deferred)}", "FAILED",
                     reason=_short_error(exc),
                 )
             continue
         errors -= 1
         if progress:
-            _status(f"Retry {index}/{len(singles)}", ok=True)
+            _status(f"Retry {index}/{len(deferred)}", "succeeded")
     return confident, review, tuple(failed_keys), causes
 
 

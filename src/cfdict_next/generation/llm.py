@@ -3,9 +3,11 @@
 Sends batches of entries (each with its full gloss list), validates the
 JSON-array response, and maps each object back onto its entry via the
 echoed `id`. Gloss parity is enforced on the response itself: every input
-sense must be covered exactly once — a dropped or invented sense fails the
-batch loudly (spec §14). The batch is retried up to `max_retries`, then a
-GenerationError names the failure. Standard library only (`urllib`).
+sense must be covered exactly once. A bogus entry salvages instead of
+sinking its batch — good entries return, only the bad ones defer to
+single retry — while transport and envelope failures still retry the whole
+batch up to `max_retries`, then raise GenerationError naming the failure.
+Standard library only (`urllib`).
 """
 
 from __future__ import annotations
@@ -161,10 +163,26 @@ def _validate_senses(item: GenerationItem, obj: Any, entry_id: int) -> tuple[Sen
     return tuple(Sense(gloss=gloss, french_definition=seen[gloss]) for gloss in item.glosses)
 
 
-def _validate_batch_response(
-    items: list[GenerationItem], raw: Any
-) -> list[GenerationResult]:
-    """Validate one batch response; return results aligned with `items`."""
+@dataclass(frozen=True)
+class BatchOutcome:
+    """One batch attempt cycle: good results plus deferrals.
+
+    `failed` holds the entries to defer to single retry; `causes` maps each
+    failed entry's key to its validation error. Empty `failed` means the
+    whole batch validated.
+    """
+
+    results: list[GenerationResult]
+    failed: list[GenerationItem]
+    causes: dict[str, str]
+
+
+def _check_envelope(raw: Any, n: int) -> dict[Any, Any]:
+    """Validate the response envelope; return objects keyed by id.
+
+    Raises GenerationError: envelope problems cannot be attributed to one
+    entry, so the whole batch must retry.
+    """
     if not isinstance(raw, list):
         raise GenerationError(
             "LLM response must be a JSON array, "
@@ -177,50 +195,77 @@ def _validate_batch_response(
         if obj["id"] in by_id:
             raise GenerationError(f"LLM response repeats id {obj['id']!r}")
         by_id[obj["id"]] = obj
-    extra = set(by_id) - set(range(len(items)))
+    extra = set(by_id) - set(range(n))
     if extra:
         raise GenerationError(f"LLM response has unknown ids: {sorted(extra)}")
+    return by_id
 
+
+def _validate_item(
+    item: GenerationItem, obj: Any, index: int
+) -> GenerationResult:
+    """Validate one entry's response object; raise on any mismatch."""
+    word = obj.get("word")
+    if word != item.simplified:
+        raise GenerationError(
+            f"LLM response id {index}: word {word!r} does not match "
+            f"requested {item.simplified!r} — mapping unsafe"
+        )
+    senses = _validate_senses(item, obj, index)
+    confidence = obj.get("confidence")
+    if confidence not in ("confident", "review"):
+        # Conservative default (output spec): when in doubt, review.
+        confidence = "review"
+    return GenerationResult(
+        key=item.key,
+        traditional=item.traditional,
+        simplified=item.simplified,
+        pinyin=item.pinyin,
+        senses=senses,
+        confidence=confidence,
+    )
+
+
+def _split_batch(
+    items: list[GenerationItem], by_id: dict[Any, Any]
+) -> BatchOutcome:
+    """Split one validated envelope into good results and deferrals.
+
+    Never raises: every per-entry problem (missing id, word mismatch,
+    gloss parity) lands in `failed` with its cause.
+    """
     results: list[GenerationResult] = []
+    failed: list[GenerationItem] = []
+    causes: dict[str, str] = {}
     for i, item in enumerate(items):
         if i not in by_id:
-            raise GenerationError(
+            failed.append(item)
+            causes[item.key] = (
                 f"LLM response is missing id {i} ({item.simplified})"
             )
-        obj = by_id[i]
-        word = obj.get("word")
-        if word != item.simplified:
-            raise GenerationError(
-                f"LLM response id {i}: word {word!r} does not match "
-                f"requested {item.simplified!r} — mapping unsafe"
-            )
-        senses = _validate_senses(item, obj, i)
-        confidence = obj.get("confidence")
-        if confidence not in ("confident", "review"):
-            # Conservative default (output spec): when in doubt, review.
-            confidence = "review"
-        results.append(
-            GenerationResult(
-                key=item.key,
-                traditional=item.traditional,
-                simplified=item.simplified,
-                pinyin=item.pinyin,
-                senses=senses,
-                confidence=confidence,
-            )
-        )
-    return results
+            continue
+        try:
+            results.append(_validate_item(item, by_id[i], i))
+        except GenerationError as exc:
+            failed.append(item)
+            causes[item.key] = str(exc)
+    return BatchOutcome(results=results, failed=failed, causes=causes)
 
 
 def generate_batch(
     items: list[GenerationItem],
     config: LLMConfig,
     post: Callable[..., Any] = post_chat_completions,
-) -> list[GenerationResult]:
+) -> BatchOutcome:
     """Generate French definitions for one batch of entries, with retries.
 
-    `post` is injectable so tests run without a network. Raises
-    GenerationError after `max_retries` failed attempts.
+    `post` is injectable so tests run without a network. Transport and
+envelope failures retry the whole batch up to `max_retries`, then raise
+GenerationError (nothing salvageable). Per-entry failures on a
+multi-entry batch salvage immediately — good entries return, bad ones
+defer — because a poison entry would otherwise burn whole-batch retries
+for everyone; the deferred singles still get their own retries from the
+caller. A single-entry batch retries per-entry failures too, then raises.
     """
     if not items:
         raise GenerationError("cannot generate an empty batch")
@@ -228,17 +273,23 @@ def generate_batch(
         if not item.glosses:
             raise GenerationError(f"entry {item.key}: no glosses to generate")
     system, user = render_prompt(items)
+    attempts = config.max_retries + 1
     last_error: GenerationError | None = None
-    for _ in range(config.max_retries + 1):
+    for _ in range(attempts):
         try:
             response = post(
                 config.endpoint, config.model, system, user, config.timeout_s
             )
             content = _extract_content(response)
             raw = _parse_content(content)
-            return _validate_batch_response(items, raw)
+            by_id = _check_envelope(raw, len(items))
         except GenerationError as exc:
             last_error = exc
+            continue
+        outcome = _split_batch(items, by_id)
+        if not outcome.failed or len(items) > 1:
+            return outcome
+        last_error = GenerationError(outcome.causes[items[0].key])
     raise GenerationError(
-        f"batch failed after {config.max_retries + 1} attempt(s): {last_error}"
+        f"batch failed after {attempts} attempt(s): {last_error}"
     )

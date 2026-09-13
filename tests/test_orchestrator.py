@@ -417,6 +417,56 @@ def test_failed_lines_carry_truncated_single_line_cause():
     assert "\n" not in line and len(line) < 300
 
 
+def test_partial_batch_writes_good_and_defers_bad(tmp_path):
+    # The user's live case: one bogus entry beside a good one. The good
+    # entry is written from the partial batch itself (no replay), only the
+    # bogus one goes to single retry and names itself in the final error.
+    import io
+
+    cfdict, cc, confident_p, review_p = dataset_files(tmp_path)
+
+    def partial_post(endpoint, model, system, user, timeout_s):
+        import json as _json
+        import re
+
+        objects = []
+        current = None
+        for line in user.splitlines():
+            m = re.match(r"^\[(\d+)\] (\S+)", line)
+            if m:
+                current = {"id": int(m[1]), "word": m[2], "senses": []}
+                objects.append(current)
+            g = re.match(r'^\s+-\s+"(.*)"$', line)
+            if g and current is not None and current["word"] != "国":
+                current["senses"].append({"gloss": g[1], "fr": f"fr-{g[1]}"})
+        for obj in objects:
+            obj["confidence"] = "confident"
+        return {"choices": [{"message": {"content": _json.dumps(objects)}}]}
+
+    stream = io.StringIO()
+    with pytest.raises(GenerationError, match="國\\|国\\|Guo2"):
+        generate_files(
+            cfdict, cc, confident_p, review_p, config(), "v", limit=0,
+            post=partial_post, generation_date="T", stream=stream,
+        )
+    confident = json.loads(confident_p.read_text(encoding="utf-8"))
+    assert set(confident) == {"行|行|Xing2"}
+    lines = stream.getvalue().splitlines()
+    assert len(lines) == 2
+    assert (
+        "Batch 1/1 PARTIAL: 1 processed / 1 errors / 0 to process / "
+        "2 total, 100% in " in lines[0]
+    )
+    assert lines[0].endswith(
+        "1 deferred, e.g. 國|国|Guo2: "
+        "LLM response id 0: 'senses' must be a non-empty array"
+    )
+    assert (
+        "Retry 1/1 FAILED: 1 processed / 1 errors / 0 to process / "
+        "2 total, 100% in " in lines[1]
+    )
+
+
 def test_no_progress_prints_nothing():
     import io
 

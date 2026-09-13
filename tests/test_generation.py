@@ -147,13 +147,14 @@ def test_few_shot_examples_pass_the_real_validator():
             assert f"[{output['id']}] {item.simplified}" in user
         return chat_body(EXAMPLE_OUTPUTS)
 
-    results = generate_batch(
+    outcome = generate_batch(
         list(EXAMPLE_ITEMS), make_config(max_retries=0), post=fake_post
     )
-    confidences = [r.confidence for r in results]
+    assert outcome.failed == []
+    confidences = [r.confidence for r in outcome.results]
     assert confidences.count("confident") == 12
     assert confidences.count("review") == 1
-    assert sum(len(r.senses) for r in results) == 23
+    assert sum(len(r.senses) for r in outcome.results) == 23
 
 
 def test_few_shot_file_is_self_consistent():
@@ -246,7 +247,9 @@ def test_generate_batch_maps_entries_to_sense_lists():
             ]
         )
 
-    results = generate_batch(make_items(), make_config(), post=fake_post)
+    outcome = generate_batch(make_items(), make_config(), post=fake_post)
+    assert outcome.failed == []
+    results = outcome.results
     assert [r.key for r in results] == ["中國|中国|Zhong1 guo2", "行|行|Xing2"]
     assert [(s.gloss, s.french_definition) for s in results[0].senses] == [
         ("China", "pays d'Asie"),
@@ -309,7 +312,9 @@ def test_unknown_confidence_defaults_to_review():
             ]
         )
 
-    (result,) = generate_batch(make_items()[:1], make_config(), post=fake_post)
+    outcome = generate_batch(make_items()[:1], make_config(), post=fake_post)
+    assert outcome.failed == []
+    (result,) = outcome.results
     assert result.confidence == "review"
 
 
@@ -332,9 +337,11 @@ def test_missing_id_retries_then_raises():
             ]
         )
 
-    with pytest.raises(GenerationError, match="missing id 1"):
-        generate_batch(make_items(), make_config(max_retries=2), post=fake_post)
-    assert len(calls) == 3  # 1 initial + 2 retries
+    outcome = generate_batch(make_items(), make_config(max_retries=2), post=fake_post)
+    assert [r.key for r in outcome.results] == ["中國|中国|Zhong1 guo2"]
+    assert [i.key for i in outcome.failed] == ["行|行|Xing2"]
+    assert "missing id 1" in outcome.causes["行|行|Xing2"]
+    assert len(calls) == 1  # salvaged at once: no whole-batch retries burned
 
 
 def test_word_mismatch_is_rejected():
@@ -397,9 +404,96 @@ def test_generate_batch_accepts_fenced_content():
     def fake_post(*args):
         return {"choices": [{"message": {"content": fenced}}]}
 
-    (result,) = generate_batch(make_items()[:1], make_config(), post=fake_post)
+    outcome = generate_batch(make_items()[:1], make_config(), post=fake_post)
+    assert outcome.failed == []
+    (result,) = outcome.results
     assert result.confidence == "confident"
     assert [s.gloss for s in result.senses] == ["China", "Middle Kingdom"]
+
+
+def test_partial_salvage_returns_good_and_defers_bad():
+    # One bogus entry (dropped sense) beside a good one: exactly one
+    # endpoint call, good entry returned, bad one deferred with its cause.
+    calls = []
+
+    def fake_post(*args):
+        calls.append(1)
+        return chat_body(
+            [
+                {
+                    "id": 0,
+                    "word": "中国",
+                    "senses": [
+                        {"gloss": "China", "fr": "pays"},
+                        {"gloss": "Middle Kingdom", "fr": "Empire"},
+                    ],
+                    "confidence": "confident",
+                },
+                {
+                    "id": 1,
+                    "word": "行",
+                    "senses": [],
+                    "confidence": "confident",
+                },
+            ]
+        )
+
+    outcome = generate_batch(make_items(), make_config(), post=fake_post)
+    assert [r.key for r in outcome.results] == ["中國|中国|Zhong1 guo2"]
+    assert [i.key for i in outcome.failed] == ["行|行|Xing2"]
+    assert "non-empty array" in outcome.causes["行|行|Xing2"]
+    assert len(calls) == 1
+
+
+def test_envelope_failure_retries_whole_batch_then_raises():
+    calls = []
+
+    def fake_post(*args):
+        calls.append(1)
+        return {"choices": [{"message": {"content": '{"id": 0}'}}]}
+
+    with pytest.raises(GenerationError, match="JSON array"):
+        generate_batch(make_items(), make_config(max_retries=2), post=fake_post)
+    assert len(calls) == 3  # 1 initial + 2 retries
+
+
+def test_single_transient_failure_recovers_on_retry():
+    calls = []
+    good = chat_body(
+        [
+            {
+                "id": 0,
+                "word": "中国",
+                "senses": [
+                    {"gloss": "China", "fr": "pays"},
+                    {"gloss": "Middle Kingdom", "fr": "Empire"},
+                ],
+                "confidence": "confident",
+            }
+        ]
+    )
+
+    def fake_post(*args):
+        calls.append(1)
+        if len(calls) == 1:
+            return chat_body(
+                [
+                    {
+                        "id": 0,
+                        "word": "中国",
+                        "senses": [{"gloss": "China", "fr": "pays"}],
+                        "confidence": "confident",
+                    }
+                ]
+            )
+        return good
+
+    outcome = generate_batch(
+        make_items()[:1], make_config(max_retries=2), post=fake_post
+    )
+    assert outcome.failed == []
+    assert [r.key for r in outcome.results] == ["中國|中国|Zhong1 guo2"]
+    assert len(calls) == 2
 
 
 def test_empty_batch_is_rejected():
