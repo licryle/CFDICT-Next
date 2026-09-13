@@ -98,7 +98,7 @@ def fake_post_factory(calls):
 def test_generate_all_batches_and_groups():
     items = compute_missing_items(CC, set(), set())
     calls = []
-    confident, review, failed = generate_all(
+    confident, review, failed, _causes = generate_all(
         items,
         config(),
         Provenance(cc_cedict_version="v", llm_model="m"),
@@ -186,10 +186,11 @@ def test_total_failure_writes_nothing_and_raises(tmp_path):
     def bad_post(*args):
         raise GenerationError("boom")
 
-    with pytest.raises(GenerationError, match="2 entries failed after retry"):
+    with pytest.raises(GenerationError, match="2 entries failed after retry") as exc_info:
         generate_files(
             cfdict, cc, confident_p, review_p, config(), "v", limit=0, post=bad_post
         )
+    assert "Causes:" in str(exc_info.value) and "boom" in str(exc_info.value)
     assert json.loads(confident_p.read_text(encoding="utf-8")) == {}
     assert json.loads(review_p.read_text(encoding="utf-8")) == {}
 
@@ -249,7 +250,7 @@ def test_progress_lines_report_counts_percent_and_elapsed():
 
     items = compute_missing_items(CC, set(), set())
     stream = io.StringIO()
-    confident, review, failed = generate_all(
+    confident, review, failed, _causes = generate_all(
         items,
         config(),
         Provenance(cc_cedict_version="v", llm_model="m"),
@@ -261,13 +262,13 @@ def test_progress_lines_report_counts_percent_and_elapsed():
     lines = stream.getvalue().splitlines()
     assert len(lines) == 2  # 3 items, batch_size 2
     assert re.fullmatch(
-        r"Batch 1/2 succeeded: 2 processed / 0 errors / 1 to process / "
-        r"3 total, 67% in \d{2}:\d{2}:\d{2}",
+        r"\d{2}:\d{2}:\d{2} Batch 1/2 succeeded: 2 processed / 0 errors / "
+        r"1 to process / 3 total, 67% in \d{2}:\d{2}:\d{2}",
         lines[0],
     )
     assert re.fullmatch(
-        r"Batch 2/2 succeeded: 3 processed / 0 errors / 0 to process / "
-        r"3 total, 100% in \d{2}:\d{2}:\d{2}",
+        r"\d{2}:\d{2}:\d{2} Batch 2/2 succeeded: 3 processed / 0 errors / "
+        r"0 to process / 3 total, 100% in \d{2}:\d{2}:\d{2}",
         lines[1],
     )
     assert "\033[" not in stream.getvalue()  # StringIO is not a tty
@@ -311,7 +312,7 @@ def test_progress_marks_failed_batches_and_retries():
         return good_post(endpoint, model, system, user, timeout_s)
 
     stream = io.StringIO()
-    confident, review, failed = generate_all(
+    confident, review, failed, _causes = generate_all(
         compute_missing_items(CC, set(), set()),
         config(),
         Provenance(cc_cedict_version="v", llm_model="m"),
@@ -322,22 +323,28 @@ def test_progress_marks_failed_batches_and_retries():
     assert failed == ("行|行|Xing2",)
     lines = stream.getvalue().splitlines()
     assert len(lines) == 3
-    assert lines[0].startswith(
-        "Batch 1/2 succeeded: 2 processed / 0 errors / 1 to process / "
-        "3 total, 67% in "
+    assert re.fullmatch(
+        r"\d{2}:\d{2}:\d{2} Batch 1/2 succeeded: 2 processed / 0 errors / "
+        r"1 to process / 3 total, 67% in \d{2}:\d{2}:\d{2}",
+        lines[0],
     )
-    assert lines[1].startswith(
-        "Batch 2/2 FAILED: 2 processed / 1 errors / 0 to process / "
-        "3 total, 100% in "
+    assert re.fullmatch(
+        r"\d{2}:\d{2}:\d{2} Batch 2/2 FAILED: 2 processed / 1 errors / "
+        r"0 to process / 3 total, 100% in \d{2}:\d{2}:\d{2} — "
+        r"batch failed after 1 attempt\(s\): poison",
+        lines[1],
     )
-    assert lines[2].startswith(
-        "Retry 1/1 FAILED: 2 processed / 1 errors / 0 to process / "
-        "3 total, 100% in "
+    assert re.fullmatch(
+        r"\d{2}:\d{2}:\d{2} Retry 1/1 FAILED: 2 processed / 1 errors / "
+        r"0 to process / 3 total, 100% in \d{2}:\d{2}:\d{2} — "
+        r"batch failed after 1 attempt\(s\): poison",
+        lines[2],
     )
 
 
 def test_retry_success_moves_entry_from_errors_to_done():
     import io
+    import re
 
     good_post = fake_post_factory([])
 
@@ -351,7 +358,7 @@ def test_retry_success_moves_entry_from_errors_to_done():
 
     stream = io.StringIO()
     items = compute_missing_items(CC, set(), set())[:2]
-    confident, review, failed = generate_all(
+    confident, review, failed, _causes = generate_all(
         items,
         config(),
         Provenance(cc_cedict_version="v", llm_model="m"),
@@ -363,18 +370,51 @@ def test_retry_success_moves_entry_from_errors_to_done():
     assert set(confident) == {"中|中|Zhong1", "國|国|Guo2"}
     lines = stream.getvalue().splitlines()
     assert len(lines) == 3
-    assert lines[0].startswith(
-        "Batch 1/1 FAILED: 0 processed / 2 errors / 0 to process / "
-        "2 total, 100% in "
+    assert re.fullmatch(
+        r"\d{2}:\d{2}:\d{2} Batch 1/1 FAILED: 0 processed / 2 errors / "
+        r"0 to process / 2 total, 100% in \d{2}:\d{2}:\d{2} — "
+        r"batch failed after 1 attempt\(s\): batch too big",
+        lines[0],
     )
-    assert lines[1].startswith(
-        "Retry 1/2 succeeded: 1 processed / 1 errors / 0 to process / "
-        "2 total, 100% in "
+    assert re.fullmatch(
+        r"\d{2}:\d{2}:\d{2} Retry 1/2 succeeded: 1 processed / 1 errors / "
+        r"0 to process / 2 total, 100% in \d{2}:\d{2}:\d{2}",
+        lines[1],
     )
-    assert lines[2].startswith(
-        "Retry 2/2 succeeded: 2 processed / 0 errors / 0 to process / "
-        "2 total, 100% in "
+    assert re.fullmatch(
+        r"\d{2}:\d{2}:\d{2} Retry 2/2 succeeded: 2 processed / 0 errors / "
+        r"0 to process / 2 total, 100% in \d{2}:\d{2}:\d{2}",
+        lines[2],
     )
+
+
+def test_failed_lines_carry_truncated_single_line_cause():
+    import io
+
+    long_msg = "first line\nsecond line " + "x" * 500
+
+    def bad_post(*args):
+        raise GenerationError(long_msg)
+
+    stream = io.StringIO()
+    generate_all(
+        compute_missing_items(CC, set(), set())[:1],
+        config(),
+        Provenance(cc_cedict_version="v", llm_model="m"),
+        generation_date="T",
+        post=bad_post,
+        stream=stream,
+    )
+    import re
+
+    line = stream.getvalue().splitlines()[0]
+    assert re.fullmatch(
+        r"\d{2}:\d{2}:\d{2} Batch 1/1 FAILED: 0 processed / 1 errors / "
+        r"0 to process / 1 total, 100% in \d{2}:\d{2}:\d{2} — "
+        r"batch failed after 1 attempt\(s\): first line second line x+…",
+        line,
+    )
+    assert "\n" not in line and len(line) < 300
 
 
 def test_no_progress_prints_nothing():
@@ -396,7 +436,7 @@ def test_no_progress_prints_nothing():
 def test_on_batch_fires_per_successful_batch():
     items = compute_missing_items(CC, set(), set())
     seen = []
-    confident, review, failed = generate_all(
+    confident, review, failed, _causes = generate_all(
         items,
         config(),
         Provenance(cc_cedict_version="v", llm_model="m"),

@@ -54,6 +54,12 @@ def _use_color(stream: Any) -> bool:
     return hasattr(stream, "isatty") and bool(stream.isatty())
 
 
+def _short_error(exc: BaseException, limit: int = 160) -> str:
+    """One-line, length-capped rendering of an error for status lines."""
+    msg = " ".join(str(exc).split())
+    return msg if len(msg) <= limit else msg[: limit - 1] + "…"
+
+
 def _elapsed_hms(start: float) -> str:
     """Elapsed wall-clock time since `start` (monotonic) as HH:MM:SS."""
     seconds = int(time.monotonic() - start)
@@ -128,7 +134,10 @@ def generate_all(
     progress: bool = True,
     stream: Any | None = None,
 ) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]], tuple[str, ...]]:
-    """Generate all items in batches; return (confident, review, failed_keys).
+    """Generate all items in batches; return (confident, review, failed, causes).
+
+    `failed` holds the persistently failing keys; `causes` maps each of them
+    to a one-line error summary (also printed on its FAILED status line).
 
     Every successful batch is converted to records and reported through
     `on_batch` immediately, so callers can persist progress as they go.
@@ -158,16 +167,21 @@ def generate_all(
     def _paint(code: str, text: str) -> str:
         return f"\033[{code}m{text}\033[0m" if color else text
 
-    def _status(label: str, ok: bool) -> None:
+    def _status(label: str, ok: bool, reason: str | None = None) -> None:
+        # Timestamp leads, counts stay in fixed position, and the failure
+        # cause trails at the end so it never breaks the readable prefix.
+        stamp = time.strftime("%H:%M:%S", time.localtime())
+        outcome = "succeeded" if ok else "FAILED"
         remaining = total - done - errors
         pct = round(100 * (done + errors) / total) if total else 100
+        tail = f" — {reason}" if reason else ""
         print(
-            f"{label} {'succeeded' if ok else 'FAILED'}: "
+            f"[{stamp}] {label} {outcome}: "
             f"{_paint(_GREEN, f'{done} processed')} / "
             f"{_paint(_RED, f'{errors} errors')} / "
             f"{_paint(_BLUE, f'{remaining} to process')} / "
             f"{total} total, "
-            f"{pct}% in {_elapsed_hms(start)}",
+            f"{pct}% in {_elapsed_hms(start)}{tail}",
             file=out,
             flush=True,
         )
@@ -191,28 +205,36 @@ def generate_all(
         chunk = list(chunk)
         try:
             _absorb(generate_batch(chunk, config, post=post))
-        except GenerationError:
+        except GenerationError as exc:
             deferred.append(chunk)
             errors += len(chunk)
             if progress:
-                _status(f"Batch {index}/{first_pass_batches}", ok=False)
+                _status(
+                    f"Batch {index}/{first_pass_batches}", ok=False,
+                    reason=_short_error(exc),
+                )
             continue
         if progress:
             _status(f"Batch {index}/{first_pass_batches}", ok=True)
     failed_keys: list[str] = []
+    causes: dict[str, str] = {}
     singles = [item for chunk in deferred for item in chunk]
     for index, item in enumerate(singles, start=1):
         try:
             _absorb(generate_batch([item], config, post=post))
-        except GenerationError:
+        except GenerationError as exc:
             failed_keys.append(item.key)
+            causes[item.key] = _short_error(exc)
             if progress:
-                _status(f"Retry {index}/{len(singles)}", ok=False)
+                _status(
+                    f"Retry {index}/{len(singles)}", ok=False,
+                    reason=_short_error(exc),
+                )
             continue
         errors -= 1
         if progress:
             _status(f"Retry {index}/{len(singles)}", ok=True)
-    return confident, review, tuple(failed_keys)
+    return confident, review, tuple(failed_keys), causes
 
 
 def generate_files(
@@ -271,16 +293,19 @@ def generate_files(
         confident.update(new_confident)
         review.update(new_review)
 
-    new_confident, new_review, failed_keys = generate_all(
+    new_confident, new_review, failed_keys, causes = generate_all(
         limited, config, provenance, generation_date, post,
         on_batch=_persist, progress=progress, stream=stream,
     )
     if failed_keys:
+        shown = "; ".join(f"{key}: {causes[key]}" for key in failed_keys[:3])
+        if len(failed_keys) > 3:
+            shown += f"; and {len(failed_keys) - 3} more"
         raise GenerationError(
             f"{len(failed_keys)} entr{'y' if len(failed_keys) == 1 else 'ies'} "
             f"failed after retry, e.g. {failed_keys[0]!r} — "
             f"{len(new_confident) + len(new_review)} succeeded and were "
-            "written; re-run resumes the rest"
+            f"written; re-run resumes the rest. Causes: {shown}"
         )
     return GenerationReport(
         plan=plan,
