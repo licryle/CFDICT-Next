@@ -83,6 +83,42 @@ def _extract_content(response: Any) -> str:
         ) from exc
 
 
+def _strip_code_fences(text: str) -> str:
+    """Strip markdown code fences LLMs add despite 'No markdown' instruction.
+
+    Handles ```json ... ```, ``` ... ```, with leading/trailing whitespace.
+    Returns the inner payload unchanged when no fences are present.
+    """
+    stripped = text.strip()
+    if not stripped.startswith("```"):
+        return stripped
+    lines = stripped.splitlines()
+    # Drop opening fence (``` or ```json + possible trailing text).
+    lines = lines[1:]
+    # Drop closing fence: last line starting with ``` (or trailing ```).
+    while lines and lines[-1].strip() == "":
+        lines.pop()
+    if lines and lines[-1].strip().startswith("```"):
+        lines = lines[:-1]
+    else:
+        # Closing fence glued to content on the same line.
+        joined = "\n".join(lines)
+        if "```" in joined:
+            joined = joined.rsplit("```", 1)[0]
+        return joined.strip()
+    return "\n".join(lines).strip()
+
+
+def _parse_content(content: str) -> Any:
+    """Parse assistant message text as JSON, tolerating code fences."""
+    try:
+        return json.loads(_strip_code_fences(content))
+    except json.JSONDecodeError as exc:
+        raise GenerationError(
+            f"LLM message content is not a JSON array: {content[:200]!r}"
+        ) from exc
+
+
 def _validate_senses(item: GenerationItem, obj: Any, entry_id: int) -> tuple[Sense, ...]:
     """Validate one entry's senses array against its input glosses."""
     senses = obj.get("senses") if isinstance(obj, dict) else None
@@ -199,12 +235,7 @@ def generate_batch(
                 config.endpoint, config.model, system, user, config.timeout_s
             )
             content = _extract_content(response)
-            try:
-                raw = json.loads(content)
-            except json.JSONDecodeError as exc:
-                raise GenerationError(
-                    f"LLM message content is not a JSON array: {content[:200]!r}"
-                ) from exc
+            raw = _parse_content(content)
             return _validate_batch_response(items, raw)
         except GenerationError as exc:
             last_error = exc

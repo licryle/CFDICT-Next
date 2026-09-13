@@ -356,6 +356,46 @@ def test_non_array_response_is_rejected():
         generate_batch(make_items()[:1], make_config(), post=fake_post)
 
 
+def test_fenced_json_content_is_accepted():
+    # Real LLMs wrap the array in ```json fences despite 'No markdown'.
+    from cfdict_next.generation.llm import _parse_content
+
+    payload = json.dumps(
+        [{"id": 0, "word": "x", "senses": [], "confidence": "confident"}]
+    )
+    assert _parse_content(f"```json\n{payload}\n```")[0]["id"] == 0
+    assert _parse_content(f"```\n{payload}\n```")[0]["word"] == "x"
+    assert _parse_content(f"  ```json\n{payload}\n```  \n")[0]["id"] == 0
+    assert _parse_content(payload)[0]["id"] == 0  # no fences: unchanged
+
+
+def test_generate_batch_accepts_fenced_content():
+    fenced = (
+        "```json\n"
+        + json.dumps(
+            [
+                {
+                    "id": 0,
+                    "word": "中国",
+                    "senses": [
+                        {"gloss": "China", "fr": "pays"},
+                        {"gloss": "Middle Kingdom", "fr": "Empire"},
+                    ],
+                    "confidence": "confident",
+                }
+            ]
+        )
+        + "\n```"
+    )
+
+    def fake_post(*args):
+        return {"choices": [{"message": {"content": fenced}}]}
+
+    (result,) = generate_batch(make_items()[:1], make_config(), post=fake_post)
+    assert result.confidence == "confident"
+    assert [s.gloss for s in result.senses] == ["China", "Middle Kingdom"]
+
+
 def test_empty_batch_is_rejected():
     with pytest.raises(GenerationError, match="empty batch"):
         generate_batch([], make_config(), post=lambda *a: None)
