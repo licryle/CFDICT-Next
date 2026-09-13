@@ -3,6 +3,9 @@ name = "cfdict-next"
 version = "0.1.0"
 description = "CFDICT-Next — CFDICT (authoritative French) extended to CC-CEDICT scope with LLM-generated French"
 requires-python = ">=3.12"
+dependencies = [
+    "jsonschema>=4.0",  # LLM record validation against schemas/llm_entry.json
+]
 
 [dependency-groups]
 dev = [

@@ -26,6 +26,9 @@ tools/
 # Local machine configuration (copy .env.example to .env)
 .env
 
+# uv lockfile from local test installs (canonical env is Nix)
+uv.lock
+
 # Assembled dictionaries are release artifacts, never sources (spec §13)
 output/
 releases/

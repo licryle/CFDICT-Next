@@ -10,11 +10,13 @@ the loader enforces.
 import json
 from pathlib import Path
 
+import pytest
+
 from src.parser.json import REQUIRED_FIELDS, assert_gloss_coverage, validate_record
 
 REPO = Path(__file__).resolve().parent.parent
 EXAMPLE = REPO / "tests" / "fixtures" / "llm_example.json"
-SCHEMA = REPO / "schemas" / "llm_output.json"
+SCHEMA = REPO / "schemas" / "llm_entry.json"
 
 
 def _example():
@@ -57,3 +59,37 @@ def test_example_senses_cover_exactly_the_input_glosses():
 def test_schema_requires_exactly_the_loader_fields():
     schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
     assert set(schema["required"]) == set(REQUIRED_FIELDS)
+
+
+def test_file_schemas_pin_confidence_and_share_the_record_shape():
+    # confident/review schemas must not duplicate the record shape: they
+    # reference llm_entry.json and only pin their confidence constant.
+    import jsonschema
+    from referencing import Registry, Resource
+    from referencing.jsonschema import DRAFT7
+
+    entry_schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
+    registry = Registry().with_resource(
+        "llm_entry.json", Resource.from_contents(entry_schema, default_specification=DRAFT7)
+    )
+    confident_schema = json.loads(
+        (REPO / "schemas" / "confident_schema.json").read_text(encoding="utf-8")
+    )
+    review_schema = json.loads(
+        (REPO / "schemas" / "review_schema.json").read_text(encoding="utf-8")
+    )
+    outputs = _example()["outputs"]
+    confident_record = next(
+        r for r in outputs.values() if r["confidence"] == "confident"
+    )
+    review_record = next(
+        r for r in outputs.values() if r["confidence"] == "review"
+    )
+    validator = jsonschema.Draft7Validator(confident_schema, registry=registry)
+    validator.validate({"k": confident_record})  # no raise
+    with pytest.raises(jsonschema.ValidationError):
+        validator.validate({"k": review_record})  # const pin enforced
+    validator = jsonschema.Draft7Validator(review_schema, registry=registry)
+    validator.validate({"k": review_record})  # no raise
+    with pytest.raises(jsonschema.ValidationError):
+        validator.validate({"k": confident_record})

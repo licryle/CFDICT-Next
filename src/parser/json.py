@@ -25,32 +25,17 @@ import json
 from pathlib import Path
 from typing import Any
 
+import jsonschema
+
 from ..identity import compute_lexical_identity
 
-REQUIRED_FIELDS = (
-    "traditional",
-    "simplified",
-    "pinyin",
-    "senses",
-    "confidence",
-    "cc_cedict_version",
-    "llm_model",
-    "prompt_version",
-    "generation_date",
+# Single normative source (spec §14): the record shape is defined once in
+# schemas/llm_entry.json and enforced here — never duplicated in code.
+SCHEMAS_DIR = Path(__file__).resolve().parent.parent.parent / "schemas"
+ENTRY_SCHEMA: dict[str, Any] = json.loads(
+    (SCHEMAS_DIR / "llm_entry.json").read_text(encoding="utf-8")
 )
-
-STRING_FIELDS = (
-    "traditional",
-    "simplified",
-    "pinyin",
-    "confidence",
-    "cc_cedict_version",
-    "llm_model",
-    "prompt_version",
-    "generation_date",
-)
-
-CONFIDENCE_VALUES = {"confident", "review"}
+REQUIRED_FIELDS = tuple(ENTRY_SCHEMA["required"])
 
 
 class LLMDataError(ValueError):
@@ -89,41 +74,23 @@ def assert_gloss_coverage(record: dict[str, Any], expected_glosses: set[str]) ->
 def validate_record(key: str, record: Any) -> str:
     """Validate one record; return its computed lexical identity.
 
-    Raises LLMDataError describing the first problem found.
+    Shape is enforced against schemas/llm_entry.json (normative); the
+    identity-key match and intra-record gloss uniqueness are relational
+    checks JSON Schema cannot express. Raises LLMDataError.
     """
     if not isinstance(record, dict):
         raise LLMDataError(f"{key}: record must be a JSON object")
-    for field in REQUIRED_FIELDS:
-        if field not in record:
-            raise LLMDataError(f"{key}: missing required field {field!r}")
-    for field in STRING_FIELDS:
-        value = record[field]
-        if not isinstance(value, str) or not value.strip():
-            raise LLMDataError(f"{key}: field {field!r} must be a non-empty string")
-    if record["confidence"] not in CONFIDENCE_VALUES:
-        raise LLMDataError(
-            f"{key}: confidence must be one of {sorted(CONFIDENCE_VALUES)}, "
-            f"got {record['confidence']!r}"
-        )
-    senses = record["senses"]
-    if not isinstance(senses, list) or not senses:
-        raise LLMDataError(f"{key}: 'senses' must be a non-empty list")
+    try:
+        jsonschema.validate(instance=record, schema=ENTRY_SCHEMA)
+    except jsonschema.ValidationError as exc:
+        location = ".".join(str(p) for p in exc.absolute_path)
+        where = f"{key}:{location}" if location else key
+        raise LLMDataError(f"{where}: {exc.message}") from None
     seen_glosses: set[str] = set()
-    for i, sense in enumerate(senses):
-        where = f"{key}: senses[{i}]"
-        if not isinstance(sense, dict):
-            raise LLMDataError(f"{where}: sense must be a JSON object")
-        for field in ("source_gloss", "french_definition"):
-            if field not in sense:
-                raise LLMDataError(f"{where}: missing required field {field!r}")
-            value = sense[field]
-            if not isinstance(value, str) or not value.strip():
-                raise LLMDataError(
-                    f"{where}: field {field!r} must be a non-empty string"
-                )
+    for i, sense in enumerate(record["senses"]):
         if sense["source_gloss"] in seen_glosses:
             raise LLMDataError(
-                f"{where}: duplicate source_gloss "
+                f"{key}: senses[{i}]: duplicate source_gloss "
                 f"{sense['source_gloss']!r} within one record"
             )
         seen_glosses.add(sense["source_gloss"])

@@ -15,6 +15,7 @@
             python312
             python312Packages.pytest
             python312Packages.pyyaml
+            python312Packages.jsonschema
             git
             gzip
           ];

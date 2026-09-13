@@ -37,10 +37,10 @@ Every record MUST carry all of these fields:
 | `prompt_version`    | Prompt template version used                         |
 | `generation_date`   | ISO 8601 timestamp of generation                     |
 
-The formal schema is `schemas/llm_output.json`
-(`confident.json`/`review.json` additionally pin `confidence` to their
-respective constant — see `schemas/confident_schema.json` and
-`schemas/review_schema.json`).
+The formal schema is `schemas/llm_entry.json` — the single normative
+source enforced by `src/parser/json.py` (spec §14). The file schemas only
+pin their respective constant — see `schemas/confident_schema.json` and
+`schemas/review_schema.json`, both thin `$ref` wrappers around it).
 
 ## Gloss parity — accept/reject criterion
 
