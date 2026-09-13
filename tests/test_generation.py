@@ -134,7 +134,7 @@ def test_render_lists_whole_gloss_lists_per_entry():
 
 
 def test_prompt_version_is_pinned():
-    assert PROMPT_VERSION == "v4"
+    assert PROMPT_VERSION == "v5"
 
 
 def test_few_shot_examples_pass_the_real_validator():
@@ -152,9 +152,9 @@ def test_few_shot_examples_pass_the_real_validator():
     )
     assert outcome.failed == []
     confidences = [r.confidence for r in outcome.results]
-    assert confidences.count("confident") == 14
+    assert confidences.count("confident") == 15
     assert confidences.count("review") == 1
-    assert sum(len(r.senses) for r in outcome.results) == 25
+    assert sum(len(r.senses) for r in outcome.results) == 27
 
 
 def test_few_shot_file_is_self_consistent():
@@ -170,7 +170,7 @@ def test_few_shot_file_is_self_consistent():
         Path(prompt_module.__file__).parent / "assets" / "few_shot_examples.json"
     )
     raw = json.loads(few_shot.read_text(encoding="utf-8"))
-    assert len(raw) >= 12
+    assert len(raw) >= 16
     for example in raw:
         en = [s for s in example["english"].split("/") if s.strip()]
         fr = [s for s in example["fr"].split("/") if s.strip()]
@@ -197,6 +197,9 @@ def test_prompt_states_label_abbreviation_rules():
     assert "à Taïwan" in system  # named in the FORBIDDEN list, not as usage
     assert "old variant of" in system
     assert "forme ancienne de" in system
+    # Regression test for the 3C/3D打印 report: whole definitions wrapped
+    # in outer parentheses instead of bare dictionary style.
+    assert "Never wrap the whole French definition" in system
 
 
 def test_few_shot_demonstrates_label_rules():
@@ -220,6 +223,12 @@ def test_few_shot_demonstrates_label_rules():
     assert "old variant of" in gloss_all
     assert "forme ancienne de 帽[mao4]" in fr_all  # reference kept, not translated
     assert "de la casquette" not in fr_all
+    # 3C: bare definitions, inner (CCC) kept, no outer wrap.
+    assert "computers, communications, and consumer electronics" in gloss_all
+    assert "ordinateurs, communications et électronique grand public" in fr_all
+    assert "certification obligatoire chinoise (CCC)" in fr_all
+    assert "(imprimante 3D)" not in fr_all
+    assert "(impression en trois dimensions)" not in fr_all
     for forbidden in ("forme fermée", "écriture littéraire", "prononcé en", "(à Taïwan"):
         # "(à Taïwan" with paren: the label expansion. Bare "à Taïwan" in
         # running text is legitimate (cf. 小朋友 usage note) and not banned.
