@@ -82,6 +82,7 @@ def assemble(
 def write_u8_file(path: str | Path, entries: list[DictionaryEntry]) -> None:
     """Atomically write a .u8 dictionary file (UTF-8, LF endings)."""
     path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
     with open(tmp, "w", encoding="utf-8", newline="\n") as f:
         for entry in entries:
