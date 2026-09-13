@@ -262,12 +262,12 @@ def test_progress_lines_report_counts_percent_and_elapsed():
     lines = stream.getvalue().splitlines()
     assert len(lines) == 2  # 3 items, batch_size 2
     assert re.fullmatch(
-        r"\d{2}:\d{2}:\d{2} Batch 1/2 succeeded: 2 processed / 0 errors / "
+        r"\[\d{2}:\d{2}:\d{2}] Batch 1/2 succeeded: 2 processed / 0 errors / "
         r"1 to process / 3 total, 67% in \d{2}:\d{2}:\d{2}",
         lines[0],
     )
     assert re.fullmatch(
-        r"\d{2}:\d{2}:\d{2} Batch 2/2 succeeded: 3 processed / 0 errors / "
+        r"\[\d{2}:\d{2}:\d{2}] Batch 2/2 succeeded: 3 processed / 0 errors / "
         r"0 to process / 3 total, 100% in \d{2}:\d{2}:\d{2}",
         lines[1],
     )
@@ -324,18 +324,18 @@ def test_progress_marks_failed_batches_and_retries():
     lines = stream.getvalue().splitlines()
     assert len(lines) == 3
     assert re.fullmatch(
-        r"\d{2}:\d{2}:\d{2} Batch 1/2 succeeded: 2 processed / 0 errors / "
+        r"\[\d{2}:\d{2}:\d{2}] Batch 1/2 succeeded: 2 processed / 0 errors / "
         r"1 to process / 3 total, 67% in \d{2}:\d{2}:\d{2}",
         lines[0],
     )
     assert re.fullmatch(
-        r"\d{2}:\d{2}:\d{2} Batch 2/2 FAILED: 2 processed / 1 errors / "
+        r"\[\d{2}:\d{2}:\d{2}] Batch 2/2 FAILED: 2 processed / 1 errors / "
         r"0 to process / 3 total, 100% in \d{2}:\d{2}:\d{2} — "
         r"batch failed after 1 attempt\(s\): poison",
         lines[1],
     )
     assert re.fullmatch(
-        r"\d{2}:\d{2}:\d{2} Retry 1/1 FAILED: 2 processed / 1 errors / "
+        r"\[\d{2}:\d{2}:\d{2}] Retry 1/1 FAILED: 2 processed / 1 errors / "
         r"0 to process / 3 total, 100% in \d{2}:\d{2}:\d{2} — "
         r"batch failed after 1 attempt\(s\): poison",
         lines[2],
@@ -371,18 +371,18 @@ def test_retry_success_moves_entry_from_errors_to_done():
     lines = stream.getvalue().splitlines()
     assert len(lines) == 3
     assert re.fullmatch(
-        r"\d{2}:\d{2}:\d{2} Batch 1/1 FAILED: 0 processed / 2 errors / "
+        r"\[\d{2}:\d{2}:\d{2}] Batch 1/1 FAILED: 0 processed / 2 errors / "
         r"0 to process / 2 total, 100% in \d{2}:\d{2}:\d{2} — "
         r"batch failed after 1 attempt\(s\): batch too big",
         lines[0],
     )
     assert re.fullmatch(
-        r"\d{2}:\d{2}:\d{2} Retry 1/2 succeeded: 1 processed / 1 errors / "
+        r"\[\d{2}:\d{2}:\d{2}] Retry 1/2 succeeded: 1 processed / 1 errors / "
         r"0 to process / 2 total, 100% in \d{2}:\d{2}:\d{2}",
         lines[1],
     )
     assert re.fullmatch(
-        r"\d{2}:\d{2}:\d{2} Retry 2/2 succeeded: 2 processed / 0 errors / "
+        r"\[\d{2}:\d{2}:\d{2}] Retry 2/2 succeeded: 2 processed / 0 errors / "
         r"0 to process / 2 total, 100% in \d{2}:\d{2}:\d{2}",
         lines[2],
     )
@@ -409,7 +409,7 @@ def test_failed_lines_carry_truncated_single_line_cause():
 
     line = stream.getvalue().splitlines()[0]
     assert re.fullmatch(
-        r"\d{2}:\d{2}:\d{2} Batch 1/1 FAILED: 0 processed / 1 errors / "
+        r"\[\d{2}:\d{2}:\d{2}] Batch 1/1 FAILED: 0 processed / 1 errors / "
         r"0 to process / 1 total, 100% in \d{2}:\d{2}:\d{2} — "
         r"batch failed after 1 attempt\(s\): first line second line x+…",
         line,
