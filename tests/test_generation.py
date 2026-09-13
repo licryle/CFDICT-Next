@@ -134,7 +134,7 @@ def test_render_lists_whole_gloss_lists_per_entry():
 
 
 def test_prompt_version_is_pinned():
-    assert PROMPT_VERSION == "v3"
+    assert PROMPT_VERSION == "v4"
 
 
 def test_few_shot_examples_pass_the_real_validator():
@@ -152,9 +152,9 @@ def test_few_shot_examples_pass_the_real_validator():
     )
     assert outcome.failed == []
     confidences = [r.confidence for r in outcome.results]
-    assert confidences.count("confident") == 12
+    assert confidences.count("confident") == 14
     assert confidences.count("review") == 1
-    assert sum(len(r.senses) for r in outcome.results) == 23
+    assert sum(len(r.senses) for r in outcome.results) == 25
 
 
 def test_few_shot_file_is_self_consistent():
@@ -195,6 +195,8 @@ def test_prompt_states_label_abbreviation_rules():
     for forbidden in ("forme fermée", "écriture littéraire", "prononcé en"):
         assert forbidden in system  # named in the FORBIDDEN list, not as usage
     assert "à Taïwan" in system  # named in the FORBIDDEN list, not as usage
+    assert "old variant of" in system
+    assert "forme ancienne de" in system
 
 
 def test_few_shot_demonstrates_label_rules():
@@ -215,6 +217,9 @@ def test_few_shot_demonstrates_label_rules():
     assert "lit." in fr_all
     assert "(Tw [" in fr_all
     assert "(Tw) pansement adhésif" in fr_all  # kept verbatim, never expanded
+    assert "old variant of" in gloss_all
+    assert "forme ancienne de 帽[mao4]" in fr_all  # reference kept, not translated
+    assert "de la casquette" not in fr_all
     for forbidden in ("forme fermée", "écriture littéraire", "prononcé en", "(à Taïwan"):
         # "(à Taïwan" with paren: the label expansion. Bare "à Taïwan" in
         # running text is legitimate (cf. 小朋友 usage note) and not banned.
