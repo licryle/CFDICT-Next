@@ -17,6 +17,7 @@ Known data quirks handled here:
 from __future__ import annotations
 
 import gzip
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator, Optional
@@ -59,9 +60,10 @@ def parse_u8_line(line: str) -> Optional[DictionaryEntry]:
     if bracket_start == -1:
         raise ValueError(f"missing [pinyin] bracket: {line!r}")
     head = line[:bracket_start].strip()
-    # Fields are separated by ASCII spaces only: U+3000 (ideographic space)
-    # occurs *inside* headwords in CFDICT and must be preserved.
-    head_tokens = [t for t in head.split(" ") if t]
+    # Fields are separated by ASCII whitespace (space/tab) only: U+3000
+    # (ideographic space) occurs *inside* headwords in CFDICT and must be
+    # preserved, so the split class is exactly [ \t].
+    head_tokens = [t for t in re.split(r"[ \t]+", head) if t]
     if len(head_tokens) != 2:
         raise ValueError(
             f"expected exactly 'traditional simplified [pinyin]': {line!r}"
