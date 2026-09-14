@@ -42,6 +42,30 @@ def test_valid_dataset_loads(tmp_path):
     assert len(data["中國|中国|Zhong1 guo2"]["senses"]) == 2
 
 
+def test_real_world_pinyin_punctuation_loads(tmp_path):
+    # CC-CEDICT pinyin carries its own punctuation: ',' separates multiple
+    # readings, ':' is the u:/ü convention, '·' splits transliterated names.
+    # Records echo source pinyin verbatim, so the schema must admit it.
+    cases = [
+        ("一不做，二不休|一不做，二不休|yi1 bu4 zuo4 , er4 bu4 xiu1",
+         "一不做，二不休", "一不做，二不休", "yi1 bu4 zuo4 , er4 bu4 xiu1"),
+        ("綠|绿|lu:4", "綠", "绿", "lu:4"),
+        ("喬治·布什|乔治·布什|Qiao2 zhi4 · Bu4 shi2",
+         "喬治·布什", "乔治·布什", "Qiao2 zhi4 · Bu4 shi2"),
+    ]
+    for key, trad, simp, pin in cases:
+        record = make_record(traditional=trad, simplified=simp, pinyin=pin)
+        f = write_dataset(tmp_path, {key: record})
+        assert list(load_llm_json(f)) == [key]
+
+
+def test_control_characters_in_pinyin_rejected(tmp_path):
+    record = make_record(pinyin="Zhong1\u0007 guo2")
+    f = write_dataset(tmp_path, {"中國|中国|Zhong1\u0007 guo2": record})
+    with pytest.raises(LLMDataError, match="pinyin"):
+        load_llm_json(f)
+
+
 def test_invalid_json_is_rejected(tmp_path):
     f = tmp_path / "bad.json"
     f.write_text("{not json", encoding="utf-8")

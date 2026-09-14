@@ -19,8 +19,8 @@
         "pinyin": {
             "type": "string",
             "minLength": 1,
-            "description": "Pinyin pronunciation with tone numbers",
-            "pattern": "^[A-Za-z0-9\\s\\-]*$"
+            "description": "Pinyin echoed from CC-CEDICT (never model-generated): tone numbers plus the source's own punctuation — ',' multi-reading separator, ':' u:/ü convention, '·' transliterated-name separator. Only control characters are rejected.",
+            "pattern": "^[^\\x00-\\x1f\\x7f-\\x9f]*$"
         },
         "senses": {
             "type": "array",
