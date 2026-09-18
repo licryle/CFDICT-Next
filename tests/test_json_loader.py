@@ -19,7 +19,6 @@ def make_record(**overrides):
                 "french_definition": "nom historique de la Chine",
             },
         ],
-        "confidence": "confident",
         "cc_cedict_version": "mdbg-2025-09-12",
         "llm_model": "test-model-v1",
         "prompt_version": "p1",
@@ -30,7 +29,7 @@ def make_record(**overrides):
 
 
 def write_dataset(tmp_path, mapping):
-    f = tmp_path / "confident.json"
+    f = tmp_path / "llm_generated.json"
     f.write_text(json.dumps(mapping, ensure_ascii=False), encoding="utf-8")
     return f
 
@@ -88,15 +87,6 @@ def test_missing_required_field_rejected(tmp_path):
         load_llm_json(f)
 
 
-def test_bad_confidence_value_rejected(tmp_path):
-    f = write_dataset(
-        tmp_path,
-        {"中國|中国|Zhong1 guo2": make_record(confidence="probably")},
-    )
-    with pytest.raises(LLMDataError, match="confidence"):
-        load_llm_json(f)
-
-
 def test_key_record_mismatch_rejected(tmp_path):
     # Key says 行|行|Xing2 but the record is 中國 — spec §14: fail, don't fix.
     f = write_dataset(tmp_path, {"行|行|Xing2": make_record()})
@@ -141,7 +131,7 @@ def test_duplicate_gloss_within_record_rejected(tmp_path):
         load_llm_json(f)
 
 
-def test_review_file_same_structure(tmp_path):
+def test_single_unified_dataset_loads(tmp_path):
     f = write_dataset(
         tmp_path,
         {
@@ -152,15 +142,14 @@ def test_review_file_same_structure(tmp_path):
                 senses=[
                     {
                         "source_gloss": "to walk",
-                        "french_definition": "marcher (à confirmer)",
+                        "french_definition": "marcher",
                     }
                 ],
-                confidence="review",
             )
         },
     )
     data = load_llm_json(f)
-    assert data["行|行|Xing2"]["confidence"] == "review"
+    assert "confidence" not in data["行|行|Xing2"]
 
 
 def test_gloss_coverage_exact_match_accepted():
@@ -178,40 +167,3 @@ def test_gloss_coverage_extra_gloss_rejected():
     record = make_record()
     with pytest.raises(LLMDataError, match="not in CC-CEDICT.*China"):
         assert_gloss_coverage(record, {"Middle Kingdom"})
-
-
-def test_expected_confidence_accepts_matching_verdicts(tmp_path):
-    f = write_dataset(tmp_path, {"中國|中国|Zhong1 guo2": make_record()})
-    assert list(load_llm_json(f, "confident")) == ["中國|中国|Zhong1 guo2"]
-    # No expectation: both verdicts load (back-compat for ad-hoc use).
-    mixed = {"中國|中国|Zhong1 guo2": make_record(confidence="review")}
-    g = write_dataset(tmp_path, mixed)
-    assert list(load_llm_json(g)) == ["中國|中国|Zhong1 guo2"]
-
-
-def test_expected_confidence_rejects_crossed_verdicts(tmp_path):
-    f = write_dataset(
-        tmp_path, {"中國|中国|Zhong1 guo2": make_record(confidence="review")}
-    )
-    with pytest.raises(LLMDataError, match="expected 'confident'"):
-        load_llm_json(f, "confident")
-    g = write_dataset(tmp_path, {"中國|中国|Zhong1 guo2": make_record()})
-    with pytest.raises(LLMDataError, match="expected 'review'"):
-        load_llm_json(g, "review")
-
-
-def test_cleanup_rejects_crossed_verdict_file(tmp_path):
-    import json
-
-    from cfdict_next.cleanup import cleanup_files
-
-    cfdict = tmp_path / "cfdict.u8"
-    cfdict.write_text("美 美 [Mei3] /beau/\n", encoding="utf-8")
-    confident_p = write_dataset(
-        tmp_path, {"中國|中国|Zhong1 guo2": make_record(confidence="review")}
-    )
-    # write_dataset always targets confident.json; review needs its own file.
-    review_p = tmp_path / "review.json"
-    review_p.write_text("{}", encoding="utf-8")
-    with pytest.raises(LLMDataError, match="expected 'confident'"):
-        cleanup_files(cfdict, confident_p, review_p)

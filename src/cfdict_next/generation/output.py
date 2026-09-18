@@ -1,11 +1,11 @@
-"""Assembling generation results into the LLM dataset files (Phase 5, spec §4, §8).
+"""Assembling generation results into the LLM dataset file (Phase 5, spec §4, §8).
 
 Results arrive per entry (identity plus full sense list); each becomes one
-record stamped with full provenance, split by confidence into the
-`confident.json` / `review.json` mappings. Writes are atomic (temp file +
-rename) so an interrupted run never leaves a half-written dataset. Merging
-into an existing file refuses to overwrite keys (spec §14: generation
-targets the missing scope, so collisions mean a bug upstream).
+record stamped with full provenance in the `llm_generated.json` mapping.
+Writes are atomic (temp file + rename) so an interrupted run never leaves
+a half-written dataset. Merging into an existing file refuses to overwrite
+keys (spec §14: generation targets the missing scope, so collisions mean
+a bug upstream).
 """
 
 from __future__ import annotations
@@ -29,50 +29,35 @@ class Provenance:
     prompt_version: str = PROMPT_VERSION
 
 
-def _identical_senses(senses: list[dict[str, str]]) -> bool:
-    """True when every sense carries the same French text (sense blending)."""
-    texts = {s["french_definition"].strip() for s in senses}
-    return len(senses) > 1 and len(texts) == 1
-
-
 def build_records(
     results: list[GenerationResult],
     provenance: Provenance,
     generation_date: str | None = None,
-) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
-    """Group per-entry results into (confident, review) identity -> records.
+) -> dict[str, dict[str, Any]]:
+    """Group per-entry results into an identity -> record mapping.
 
-    An entry whose senses all share one identical French text is forced to
-    `review`: undifferentiated senses are the signature of a model that
-    blended the glosses instead of defining each one.
     `generation_date` defaults to the current UTC time in ISO 8601; pass an
     explicit value for deterministic output (tests).
     """
     if generation_date is None:
         generation_date = datetime.now(timezone.utc).isoformat()
-    confident: dict[str, dict[str, Any]] = {}
-    review: dict[str, dict[str, Any]] = {}
+    records: dict[str, dict[str, Any]] = {}
     for result in results:
         senses = [
             {"source_gloss": s.gloss, "french_definition": s.french_definition}
             for s in result.senses
         ]
-        confidence = result.confidence
-        if _identical_senses(senses):
-            confidence = "review"
-        record = {
+        records[result.key] = {
             "traditional": result.traditional,
             "simplified": result.simplified,
             "pinyin": result.pinyin,
             "senses": senses,
-            "confidence": confidence,
             "cc_cedict_version": provenance.cc_cedict_version,
             "llm_model": provenance.llm_model,
             "prompt_version": provenance.prompt_version,
             "generation_date": generation_date,
         }
-        (confident if confidence == "confident" else review)[result.key] = record
-    return confident, review
+    return records
 
 
 def merge_records(

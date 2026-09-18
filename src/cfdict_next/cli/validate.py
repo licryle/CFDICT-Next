@@ -2,8 +2,8 @@
 
 Usage:
     python scripts/validate.py [--cfdict PATH] [--cc-cedict PATH]
-                               [--confident PATH] [--review PATH]
-                               [--out-confident PATH] [--out-full PATH]
+                                [--human PATH] [--llm-generated PATH]
+                                [--out-human PATH] [--out-full PATH]
 
 Validates inputs always; validates assembled outputs when both --out-*
 paths are given. Exits 1 with named reasons on any violation.
@@ -25,22 +25,24 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--cc-cedict", default="data/cc-cedict/cedict_1_0_ts_utf-8_mdbg.txt.gz"
     )
-    parser.add_argument("--confident", default="data/confident.json")
-    parser.add_argument("--review", default="data/review.json")
+    parser.add_argument("--human", default="data/human.u8")
+    parser.add_argument("--llm-generated", default="data/llm_generated.json")
+    parser.add_argument("--out-human", default=None)
     parser.add_argument("--out-confident", default=None)
     parser.add_argument("--out-full", default=None)
     args = parser.parse_args(argv)
 
     report, data = validate_inputs(
-        args.cfdict, args.cc_cedict, args.confident, args.review
+        args.cfdict, args.cc_cedict, args.human, args.llm_generated
     )
-    if data is not None and args.out_confident and args.out_full:
+    out_human = args.out_human or args.out_confident
+    if data is not None and out_human and args.out_full:
         check_outputs(
-            args.out_confident,
+            out_human,
             args.out_full,
             data["cfdict_ids"],
-            set(data["confident"]),
-            set(data["review"]),
+            data["human_ids"],
+            set(data["llm_generated"]),
             report,
         )
     for check in report.checks:

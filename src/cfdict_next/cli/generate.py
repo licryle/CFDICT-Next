@@ -1,14 +1,14 @@
-"""Generation orchestrator CLI: fill the LLM datasets from the missing scope.
+"""Generation orchestrator CLI: fill the LLM dataset from the missing scope.
 
 Usage:
     python scripts/generate.py [--env PATH] [--cfdict PATH] [--cc-cedict PATH]
-                               [--confident PATH] [--review PATH]
-                               [--cc-version LABEL] [--batch-size N]
-                               [--limit N] [--dry-run]
+                                [--human PATH] [--llm-generated PATH]
+                                [--cc-version LABEL] [--batch-size N]
+                                [--limit N] [--dry-run]
 
-Computes CC-CEDICT − CFDICT − CFDICT-LLM (spec §3, §5), generates French
-definitions in batches through the configured OpenAI-compatible endpoint,
-and merges the records into confident.json / review.json.
+Computes CC-CEDICT − CFDICT − human.u8 − llm_generated.json (spec §3, §5),
+generates French definitions in batches through the configured
+OpenAI-compatible endpoint, and merges the records into llm_generated.json.
 
 Safety: --limit caps entries per run (default 20); pass --limit 0 for a
 full-scope run. --dry-run plans without calling the endpoint or writing.
@@ -34,8 +34,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--cc-cedict", default="data/cc-cedict/cedict_1_0_ts_utf-8_mdbg.txt.gz"
     )
-    parser.add_argument("--confident", default="data/confident.json")
-    parser.add_argument("--review", default="data/review.json")
+    parser.add_argument("--human", default="data/human.u8")
+    parser.add_argument("--llm-generated", default="data/llm_generated.json")
     parser.add_argument("--cc-version", default=None)
     parser.add_argument("--batch-size", type=int, default=None)
     parser.add_argument("--limit", type=int, default=20)
@@ -63,8 +63,8 @@ def main(argv: list[str] | None = None) -> int:
         report = generate_files(
             args.cfdict,
             args.cc_cedict,
-            args.confident,
-            args.review,
+            args.human,
+            args.llm_generated,
             config,
             cc_version,
             limit=args.limit,
@@ -84,8 +84,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print(
             f"generate done: {plan.limited_to}/{plan.scoped} entries in "
-            f"{plan.batches} batch(es) -> "
-            f"{report.confident_new} confident, {report.review_new} review"
+            f"{plan.batches} batch(es) -> {report.llm_new} generated"
         )
         if plan.limited_to < plan.scoped:
             print(

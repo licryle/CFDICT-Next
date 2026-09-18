@@ -42,7 +42,6 @@ class GenerationResult:
     simplified: str
     pinyin: str
     senses: tuple[Sense, ...]
-    confidence: str  # "confident" | "review"
 
 
 def post_chat_completions(
@@ -212,17 +211,12 @@ def _validate_item(
             f"requested {item.simplified!r} — mapping unsafe"
         )
     senses = _validate_senses(item, obj, index)
-    confidence = obj.get("confidence")
-    if confidence not in ("confident", "review"):
-        # Conservative default (output spec): when in doubt, review.
-        confidence = "review"
     return GenerationResult(
         key=item.key,
         traditional=item.traditional,
         simplified=item.simplified,
         pinyin=item.pinyin,
         senses=senses,
-        confidence=confidence,
     )
 
 

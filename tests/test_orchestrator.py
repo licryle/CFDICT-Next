@@ -75,7 +75,7 @@ def fake_post_factory(calls):
         import json as _json
         import re
 
-        # Answer every requested id with a confident single-gloss sense set:
+        # Answer every requested id with a single-gloss sense set:
         # parse ids + glosses back out of the rendered user message.
         ids = [int(m) for m in re.findall(r"^\[(\d+)\]", user, re.M)]
         current, objects = None, []
@@ -87,8 +87,6 @@ def fake_post_factory(calls):
             g = re.match(r'^\s+-\s+"(.*)"$', line)
             if g and current is not None:
                 current["senses"].append({"gloss": g[1], "fr": f"fr-{g[1]}"})
-        for obj in objects:
-            obj["confidence"] = "confident"
         assert sorted(o["id"] for o in objects) == sorted(ids)
         return {"choices": [{"message": {"content": _json.dumps(objects)}}]}
 
@@ -98,7 +96,7 @@ def fake_post_factory(calls):
 def test_generate_all_batches_and_groups():
     items = compute_missing_items(CC, set(), set())
     calls = []
-    confident, review, failed, _causes = generate_all(
+    records, failed, _causes = generate_all(
         items,
         config(),
         Provenance(cc_cedict_version="v", llm_model="m"),
@@ -107,9 +105,8 @@ def test_generate_all_batches_and_groups():
     )
     assert failed == ()
     assert len(calls) == 2  # 3 items, batch_size 2
-    assert set(confident) == {"中|中|Zhong1", "國|国|Guo2", "行|行|Xing2"}
-    assert review == {}
-    assert [s["source_gloss"] for s in confident["國|国|Guo2"]["senses"]] == [
+    assert set(records) == {"中|中|Zhong1", "國|国|Guo2", "行|行|Xing2"}
+    assert [s["source_gloss"] for s in records["國|国|Guo2"]["senses"]] == [
         "country",
         "state",
     ]
@@ -128,77 +125,76 @@ def dataset_files(tmp_path, cfdict_ids_extra=frozenset()):
         "國 国 [Guo2] /country/\n"
         "行 行 [Xing2] /to walk/\n",
     )
-    confident_p = write(tmp_path / "confident.json", json.dumps({}))
-    review_p = write(tmp_path / "review.json", json.dumps({}))
-    return cfdict, cc, confident_p, review_p
+    human_p = write(tmp_path / "human.u8", "")
+    llm_p = write(tmp_path / "llm_generated.json", json.dumps({}))
+    return cfdict, cc, human_p, llm_p
 
 
 def test_generate_files_end_to_end(tmp_path):
-    cfdict, cc, confident_p, review_p = dataset_files(tmp_path)
+    cfdict, cc, human_p, llm_p = dataset_files(tmp_path)
     calls = []
     report = generate_files(
-        cfdict, cc, confident_p, review_p,
+        cfdict, cc, human_p, llm_p,
         config(), "cc-v1", limit=0, post=fake_post_factory(calls),
         generation_date="T",
     )
     assert report.plan.scoped == 2  # 國 + 行 (中 is CFDICT)
-    assert report.confident_new == 2 and report.review_new == 0
-    confident = json.loads(confident_p.read_text(encoding="utf-8"))
-    assert set(confident) == {"國|国|Guo2", "行|行|Xing2"}
-    assert confident["國|国|Guo2"]["cc_cedict_version"] == "cc-v1"
-    assert confident["國|国|Guo2"]["llm_model"] == "m"
+    assert report.llm_new == 2
+    llm_generated = json.loads(llm_p.read_text(encoding="utf-8"))
+    assert set(llm_generated) == {"國|国|Guo2", "行|行|Xing2"}
+    assert llm_generated["國|国|Guo2"]["cc_cedict_version"] == "cc-v1"
+    assert llm_generated["國|国|Guo2"]["llm_model"] == "m"
 
 
 def test_limit_truncates_and_resumes(tmp_path):
-    cfdict, cc, confident_p, review_p = dataset_files(tmp_path)
+    cfdict, cc, human_p, llm_p = dataset_files(tmp_path)
     calls = []
     post = fake_post_factory(calls)
     first = generate_files(
-        cfdict, cc, confident_p, review_p, config(), "v", limit=1, post=post,
+        cfdict, cc, human_p, llm_p, config(), "v", limit=1, post=post,
         generation_date="T",
     )
-    assert first.plan.limited_to == 1 and first.confident_new == 1
+    assert first.plan.limited_to == 1 and first.llm_new == 1
     second = generate_files(
-        cfdict, cc, confident_p, review_p, config(), "v", limit=0, post=post,
+        cfdict, cc, human_p, llm_p, config(), "v", limit=0, post=post,
         generation_date="T",
     )
-    assert second.confident_new == 1  # only the remaining entry
-    confident = json.loads(confident_p.read_text(encoding="utf-8"))
-    assert set(confident) == {"國|国|Guo2", "行|行|Xing2"}
+    assert second.llm_new == 1  # only the remaining entry
+    llm_generated = json.loads(llm_p.read_text(encoding="utf-8"))
+    assert set(llm_generated) == {"國|国|Guo2", "行|行|Xing2"}
 
 
 def test_dry_run_calls_no_batches_and_writes_nothing(tmp_path):
-    cfdict, cc, confident_p, review_p = dataset_files(tmp_path)
-    before = (confident_p.read_bytes(), review_p.read_bytes())
+    cfdict, cc, human_p, llm_p = dataset_files(tmp_path)
+    before = (human_p.read_bytes(), llm_p.read_bytes())
     calls = []
     report = generate_files(
-        cfdict, cc, confident_p, review_p, config(), "v", dry_run=True,
+        cfdict, cc, human_p, llm_p, config(), "v", dry_run=True,
         post=fake_post_factory(calls),
     )
     assert calls == []
     assert report.dry_run and report.plan.scoped == 2
-    assert (confident_p.read_bytes(), review_p.read_bytes()) == before
+    assert (human_p.read_bytes(), llm_p.read_bytes()) == before
 
 
 def test_total_failure_writes_nothing_and_raises(tmp_path):
-    cfdict, cc, confident_p, review_p = dataset_files(tmp_path)
+    cfdict, cc, human_p, llm_p = dataset_files(tmp_path)
 
     def bad_post(*args):
         raise GenerationError("boom")
 
     with pytest.raises(GenerationError, match="2 entries failed after retry") as exc_info:
         generate_files(
-            cfdict, cc, confident_p, review_p, config(), "v", limit=0, post=bad_post
+            cfdict, cc, human_p, llm_p, config(), "v", limit=0, post=bad_post
         )
     assert "Causes:" in str(exc_info.value) and "boom" in str(exc_info.value)
-    assert json.loads(confident_p.read_text(encoding="utf-8")) == {}
-    assert json.loads(review_p.read_text(encoding="utf-8")) == {}
+    assert json.loads(llm_p.read_text(encoding="utf-8")) == {}
 
 
 def test_poison_entry_isolated_rest_written_and_reported(tmp_path):
     # 國 always fails, even alone: its batch-mate 行 must still be written,
     # and the error must name the poison key for resume.
-    cfdict, cc, confident_p, review_p = dataset_files(tmp_path)
+    cfdict, cc, human_p, llm_p = dataset_files(tmp_path)
     good_post = fake_post_factory([])
 
     def flaky_post(endpoint, model, system, user, timeout_s):
@@ -208,23 +204,23 @@ def test_poison_entry_isolated_rest_written_and_reported(tmp_path):
 
     with pytest.raises(GenerationError, match="國\\|国\\|Guo2"):
         generate_files(
-            cfdict, cc, confident_p, review_p, config(), "v", limit=0,
+            cfdict, cc, human_p, llm_p, config(), "v", limit=0,
             post=flaky_post, generation_date="T",
         )
-    confident = json.loads(confident_p.read_text(encoding="utf-8"))
-    assert set(confident) == {"行|行|Xing2"}  # success persisted
+    llm_generated = json.loads(llm_p.read_text(encoding="utf-8"))
+    assert set(llm_generated) == {"行|行|Xing2"}  # success persisted
     # Resume skips the written entry and fails again only on the poison one.
     with pytest.raises(GenerationError, match="國\\|国\\|Guo2"):
         generate_files(
-            cfdict, cc, confident_p, review_p, config(), "v", limit=0,
+            cfdict, cc, human_p, llm_p, config(), "v", limit=0,
             post=flaky_post, generation_date="T",
         )
-    confident = json.loads(confident_p.read_text(encoding="utf-8"))
-    assert set(confident) == {"行|行|Xing2"}
+    llm_generated = json.loads(llm_p.read_text(encoding="utf-8"))
+    assert set(llm_generated) == {"行|行|Xing2"}
 
 
 def test_transient_failure_recovers_in_retry_pass(tmp_path):
-    cfdict, cc, confident_p, review_p = dataset_files(tmp_path)
+    cfdict, cc, human_p, llm_p = dataset_files(tmp_path)
     calls = []
     good_post = fake_post_factory(calls)
     state = {"failed_once": False}
@@ -236,12 +232,12 @@ def test_transient_failure_recovers_in_retry_pass(tmp_path):
         return good_post(*args)
 
     report = generate_files(
-        cfdict, cc, confident_p, review_p, config(), "v", limit=0,
+        cfdict, cc, human_p, llm_p, config(), "v", limit=0,
         post=transient_post, generation_date="T",
     )
-    assert report.confident_new == 2
-    confident = json.loads(confident_p.read_text(encoding="utf-8"))
-    assert set(confident) == {"國|国|Guo2", "行|行|Xing2"}
+    assert report.llm_new == 2
+    llm_generated = json.loads(llm_p.read_text(encoding="utf-8"))
+    assert set(llm_generated) == {"國|国|Guo2", "行|行|Xing2"}
 
 
 def test_progress_lines_report_counts_percent_and_elapsed():
@@ -250,7 +246,7 @@ def test_progress_lines_report_counts_percent_and_elapsed():
 
     items = compute_missing_items(CC, set(), set())
     stream = io.StringIO()
-    confident, review, failed, _causes = generate_all(
+    records, failed, _causes = generate_all(
         items,
         config(),
         Provenance(cc_cedict_version="v", llm_model="m"),
@@ -312,7 +308,7 @@ def test_progress_marks_failed_batches_and_retries():
         return good_post(endpoint, model, system, user, timeout_s)
 
     stream = io.StringIO()
-    confident, review, failed, _causes = generate_all(
+    records, failed, _causes = generate_all(
         compute_missing_items(CC, set(), set()),
         config(),
         Provenance(cc_cedict_version="v", llm_model="m"),
@@ -358,7 +354,7 @@ def test_retry_success_moves_entry_from_errors_to_done():
 
     stream = io.StringIO()
     items = compute_missing_items(CC, set(), set())[:2]
-    confident, review, failed, _causes = generate_all(
+    records, failed, _causes = generate_all(
         items,
         config(),
         Provenance(cc_cedict_version="v", llm_model="m"),
@@ -367,7 +363,7 @@ def test_retry_success_moves_entry_from_errors_to_done():
         stream=stream,
     )
     assert failed == ()
-    assert set(confident) == {"中|中|Zhong1", "國|国|Guo2"}
+    assert set(records) == {"中|中|Zhong1", "國|国|Guo2"}
     lines = stream.getvalue().splitlines()
     assert len(lines) == 3
     assert re.fullmatch(
@@ -423,7 +419,7 @@ def test_partial_batch_writes_good_and_defers_bad(tmp_path):
     # bogus one goes to single retry and names itself in the final error.
     import io
 
-    cfdict, cc, confident_p, review_p = dataset_files(tmp_path)
+    cfdict, cc, human_p, llm_p = dataset_files(tmp_path)
 
     def partial_post(endpoint, model, system, user, timeout_s):
         import json as _json
@@ -439,18 +435,16 @@ def test_partial_batch_writes_good_and_defers_bad(tmp_path):
             g = re.match(r'^\s+-\s+"(.*)"$', line)
             if g and current is not None and current["word"] != "国":
                 current["senses"].append({"gloss": g[1], "fr": f"fr-{g[1]}"})
-        for obj in objects:
-            obj["confidence"] = "confident"
         return {"choices": [{"message": {"content": _json.dumps(objects)}}]}
 
     stream = io.StringIO()
     with pytest.raises(GenerationError, match="國\\|国\\|Guo2"):
         generate_files(
-            cfdict, cc, confident_p, review_p, config(), "v", limit=0,
+            cfdict, cc, human_p, llm_p, config(), "v", limit=0,
             post=partial_post, generation_date="T", stream=stream,
         )
-    confident = json.loads(confident_p.read_text(encoding="utf-8"))
-    assert set(confident) == {"行|行|Xing2"}
+    llm_generated = json.loads(llm_p.read_text(encoding="utf-8"))
+    assert set(llm_generated) == {"行|行|Xing2"}
     lines = stream.getvalue().splitlines()
     assert len(lines) == 2
     assert (
@@ -486,25 +480,25 @@ def test_no_progress_prints_nothing():
 def test_on_batch_fires_per_successful_batch():
     items = compute_missing_items(CC, set(), set())
     seen = []
-    confident, review, failed, _causes = generate_all(
+    records, failed, _causes = generate_all(
         items,
         config(),
         Provenance(cc_cedict_version="v", llm_model="m"),
         generation_date="T",
         post=fake_post_factory([]),
-        on_batch=lambda c, r: seen.append((set(c), set(r))),
+        on_batch=lambda rec: seen.append(set(rec)),
     )
     assert failed == ()
     assert len(seen) == 2  # batch_size 2 over 3 items
-    assert seen[0][0] == {"中|中|Zhong1", "國|国|Guo2"}
-    assert seen[1][0] == {"行|行|Xing2"}
+    assert seen[0] == {"中|中|Zhong1", "國|国|Guo2"}
+    assert seen[1] == {"行|行|Xing2"}
 
 
 def test_cli_reports_generation_error_without_traceback(tmp_path, capsys, monkeypatch):
     import cfdict_next.cli.generate as cli_mod
     from cfdict_next.cli.generate import main as cli_main
 
-    cfdict, cc, confident_p, review_p = dataset_files(tmp_path)
+    cfdict, cc, human_p, llm_p = dataset_files(tmp_path)
     env = tmp_path / ".env"
     env.write_text(
         "LLM_API_ENDPOINT=http://x:1/y\nLLM_MODEL_NAME=m\n", encoding="utf-8"
@@ -516,7 +510,7 @@ def test_cli_reports_generation_error_without_traceback(tmp_path, capsys, monkey
     monkeypatch.setattr(cli_mod, "generate_files", failing_generate)
     rc = cli_main(
         ["--env", str(env), "--cfdict", str(cfdict), "--cc-cedict", str(cc),
-         "--confident", str(confident_p), "--review", str(review_p)]
+         "--human", str(human_p), "--llm-generated", str(llm_p)]
     )
     assert rc == 1
     err = capsys.readouterr().err
@@ -526,14 +520,14 @@ def test_cli_reports_generation_error_without_traceback(tmp_path, capsys, monkey
 def test_cli_dry_run(tmp_path, capsys):
     from cfdict_next.cli.generate import main as cli_main
 
-    cfdict, cc, confident_p, review_p = dataset_files(tmp_path)
+    cfdict, cc, human_p, llm_p = dataset_files(tmp_path)
     env = tmp_path / ".env"
     env.write_text(
         "LLM_API_ENDPOINT=http://x:1/y\nLLM_MODEL_NAME=m\n", encoding="utf-8"
     )
     rc = cli_main(
         ["--env", str(env), "--cfdict", str(cfdict), "--cc-cedict", str(cc),
-         "--confident", str(confident_p), "--review", str(review_p),
+         "--human", str(human_p), "--llm-generated", str(llm_p),
          "--dry-run"]
     )
     assert rc == 0

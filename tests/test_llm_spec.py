@@ -1,4 +1,4 @@
-"""Tests for the LLM generation interface spec (plan Step 4.5, spec §5, §6, §7, §8, §15).
+"""Tests for the LLM generation interface spec (plan Step 4.5, spec §5, §6, §8, §15).
 
 These tests pin the contract between docs, example, schema and loader:
 the example in tests/fixtures/llm_example.json must satisfy the loader's
@@ -9,8 +9,6 @@ the loader enforces.
 
 import json
 from pathlib import Path
-
-import pytest
 
 from cfdict_next.parser.json import REQUIRED_FIELDS, assert_gloss_coverage, validate_record
 
@@ -41,9 +39,9 @@ def test_example_outputs_validate_against_loader():
         assert validate_record(key, record) == key
 
 
-def test_example_covers_both_confidence_classes():
-    confidences = {r["confidence"] for r in _example()["outputs"].values()}
-    assert confidences == {"confident", "review"}
+def test_example_has_no_confidence_field():
+    for record in _example()["outputs"].values():
+        assert "confidence" not in record
 
 
 def test_example_senses_cover_exactly_the_input_glosses():
@@ -59,11 +57,13 @@ def test_example_senses_cover_exactly_the_input_glosses():
 def test_schema_requires_exactly_the_loader_fields():
     schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
     assert set(schema["required"]) == set(REQUIRED_FIELDS)
+    assert "confidence" not in schema["required"]
+    assert "confidence" not in schema.get("properties", {})
 
 
-def test_file_schemas_pin_confidence_and_share_the_record_shape():
-    # confident/review schemas must not duplicate the record shape: they
-    # reference llm_entry.json and only pin their confidence constant.
+def test_generated_file_schema_shares_the_record_shape():
+    # llm_generated_schema.json must not duplicate the record shape: it
+    # references llm_entry.json.
     import jsonschema
     from referencing import Registry, Resource
     from referencing.jsonschema import DRAFT7
@@ -72,24 +72,10 @@ def test_file_schemas_pin_confidence_and_share_the_record_shape():
     registry = Registry().with_resource(
         "llm_entry.json", Resource.from_contents(entry_schema, default_specification=DRAFT7)
     )
-    confident_schema = json.loads(
-        (REPO / "schemas" / "confident_schema.json").read_text(encoding="utf-8")
-    )
-    review_schema = json.loads(
-        (REPO / "schemas" / "review_schema.json").read_text(encoding="utf-8")
+    generated_schema = json.loads(
+        (REPO / "schemas" / "llm_generated_schema.json").read_text(encoding="utf-8")
     )
     outputs = _example()["outputs"]
-    confident_record = next(
-        r for r in outputs.values() if r["confidence"] == "confident"
-    )
-    review_record = next(
-        r for r in outputs.values() if r["confidence"] == "review"
-    )
-    validator = jsonschema.Draft7Validator(confident_schema, registry=registry)
-    validator.validate({"k": confident_record})  # no raise
-    with pytest.raises(jsonschema.ValidationError):
-        validator.validate({"k": review_record})  # const pin enforced
-    validator = jsonschema.Draft7Validator(review_schema, registry=registry)
-    validator.validate({"k": review_record})  # no raise
-    with pytest.raises(jsonschema.ValidationError):
-        validator.validate({"k": confident_record})
+    record = next(iter(outputs.values()))
+    validator = jsonschema.Draft7Validator(generated_schema, registry=registry)
+    validator.validate({"k": record})  # no raise

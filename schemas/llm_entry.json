@@ -2,9 +2,9 @@
     "$schema": "http://json-schema.org/draft-07/schema#",
     "$id": "https://cfdict-next.example/schemas/llm_entry.json",
     "title": "LLM Entry (normative record schema)",
-    "description": "Schema for LLM-generated French dictionary entries: one record per lexical entry with one sense per CEDICT gloss (used for both confident and review JSON files)",
+    "description": "Schema for LLM-generated French dictionary entries: one record per lexical entry with one sense per CEDICT gloss (used for llm_generated.json)",
     "type": "object",
-    "required": ["traditional", "simplified", "pinyin", "senses", "confidence", "cc_cedict_version", "llm_model", "prompt_version", "generation_date"],
+    "required": ["traditional", "simplified", "pinyin", "senses", "cc_cedict_version", "llm_model", "prompt_version", "generation_date"],
     "properties": {
         "traditional": {
             "type": "string",
@@ -43,11 +43,6 @@
                 },
                 "additionalProperties": false
             }
-        },
-        "confidence": {
-            "type": "string",
-            "enum": ["confident", "review"],
-            "description": "Confidence classification for this entry"
         },
         "cc_cedict_version": {
             "type": "string",

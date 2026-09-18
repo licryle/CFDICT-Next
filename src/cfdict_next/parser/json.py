@@ -1,8 +1,8 @@
-"""Loading and validation of the LLM dataset files (spec §4, §5, §8, §15).
+"""Loading and validation of the LLM dataset file (spec §4, §5, §8, §15).
 
-File format (both `confident.json` and `review.json`): a single JSON object
-mapping lexical identity -> record. JSON is the working/generation format
-for LLM output (spec §4); .u8 is only used for assembled dictionaries.
+File format (`llm_generated.json`): a single JSON object mapping lexical
+identity -> record. JSON is the working/generation format for LLM output
+(spec §4); .u8 is only used for assembled dictionaries.
 
 One record per lexical entry. Each record carries a `senses` list with one
 sense per CEDICT gloss (spec §5: generation happens per gloss; §15: glosses
@@ -12,7 +12,7 @@ the CC-CEDICT gloss set for the entry — same glosses, same count
 drops a gloss or invents one is rejected, never silently fixed (spec §14).
 
 Every record must carry full provenance (spec §8):
-  traditional, simplified, pinyin, senses[], confidence,
+  traditional, simplified, pinyin, senses[],
   cc_cedict_version, llm_model, prompt_version, generation_date
 
 The record key must equal the record's own lexical identity, so the mapping
@@ -106,16 +106,11 @@ def validate_record(key: str, record: Any) -> str:
     return expected_key
 
 
-def load_llm_json(
-    path: str | Path, expected_confidence: str | None = None
-) -> dict[str, dict[str, str]]:
-    """Load and fully validate an LLM dataset file.
+def load_llm_json(path: str | Path) -> dict[str, dict[str, str]]:
+    """Load and fully validate the LLM dataset file.
 
     Returns the mapping identity -> record. Raises LLMDataError on any
-    structural or relationship violation (spec §14). When
-    `expected_confidence` is given, every record's verdict must match it —
-    a `review` record inside `confident.json` (or vice versa) is rejected
-    instead of silently flowing into the wrong dictionary.
+    structural or relationship violation (spec §14).
 
     Note: gloss-coverage against CC-CEDICT (`assert_gloss_coverage`) is a
     separate step — the loader sees only the JSON file, not CC-CEDICT.
@@ -135,10 +130,5 @@ def load_llm_json(
         if not isinstance(key, str) or not key.strip():
             raise LLMDataError(f"{path}: identity keys must be non-empty strings")
         validate_record(key, record)
-        if expected_confidence is not None and record["confidence"] != expected_confidence:
-            raise LLMDataError(
-                f"{path}: record {key!r} has confidence "
-                f"{record['confidence']!r}, expected {expected_confidence!r}"
-            )
         validated[key] = record
     return validated

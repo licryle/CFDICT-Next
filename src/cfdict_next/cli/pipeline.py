@@ -48,10 +48,9 @@ class PipelineReport:
     dry_run: bool
     missing_scoped: int
     generated: int
-    confident_new: int
-    review_new: int
+    llm_new: int
     cleanup: CleanupReport | None
-    confident_n: int
+    human_n: int
     full_n: int
     scope_markdown: str
 
@@ -66,9 +65,9 @@ def run_pipeline(
     *,
     cfdict_path: str | Path,
     cc_cedict_path: str | Path,
-    confident_path: str | Path,
-    review_path: str | Path,
-    out_confident_path: str | Path,
+    human_path: str | Path,
+    llm_generated_path: str | Path,
+    out_human_path: str | Path,
     out_full_path: str | Path,
     config: LLMConfig,
     cc_version: str | None = None,
@@ -82,7 +81,7 @@ def run_pipeline(
 ) -> PipelineReport:
     """Run the full local pipeline; raise PipelineError on any failure."""
     cfdict_path, cc_cedict_path = Path(cfdict_path), Path(cc_cedict_path)
-    confident_path, review_path = Path(confident_path), Path(review_path)
+    human_path, llm_generated_path = Path(human_path), Path(llm_generated_path)
 
     def _announce(text: str) -> None:
         if progress:
@@ -103,8 +102,8 @@ def run_pipeline(
             pre = generate_files(
                 cfdict_path,
                 cc_cedict_path,
-                confident_path,
-                review_path,
+                human_path,
+                llm_generated_path,
                 config,
                 cc_version,
                 limit=limit,
@@ -125,8 +124,8 @@ def run_pipeline(
                 gen_report = generate_files(
                     cfdict_path,
                     cc_cedict_path,
-                    confident_path,
-                    review_path,
+                    human_path,
+                    llm_generated_path,
                     config,
                     cc_version,
                     limit=limit,
@@ -137,72 +136,71 @@ def run_pipeline(
                 )
             except (ValueError, OSError, GenerationError) as exc:
                 raise PipelineError("generate", str(exc)) from exc
-            _announce(
-                f"[generate] done: {gen_report.confident_new} confident, "
-                f"{gen_report.review_new} review"
-            )
+            _announce(f"[generate] done: {gen_report.llm_new} generated")
 
     if dry_run:
         # Read-only assessment of the current datasets; nothing downstream.
         report, _ = validate_inputs(
-            cfdict_path, cc_cedict_path, confident_path, review_path
+            cfdict_path, cc_cedict_path, human_path, llm_generated_path
         )
         return PipelineReport(
             dry_run=True,
             missing_scoped=gen_report.plan.scoped if gen_report else 0,
             generated=0,
-            confident_new=0,
-            review_new=0,
+            llm_new=0,
             cleanup=None,
-            confident_n=0,
+            human_n=0,
             full_n=0,
             scope_markdown="",
         )
 
     _announce("[cleanup] start")
     try:
-        cleanup_report = cleanup_files(cfdict_path, confident_path, review_path)
+        cleanup_report = cleanup_files(
+            cfdict_path, human_path, llm_generated_path
+        )
     except (ValueError, OSError) as exc:
         raise PipelineError("cleanup", str(exc)) from exc
     dropped = (
-        cleanup_report.confident_removed_cfdict
-        + cleanup_report.review_removed_cfdict
-        + cleanup_report.review_removed_confident
+        cleanup_report.human_removed_cfdict
+        + cleanup_report.llm_removed_cfdict
+        + cleanup_report.llm_removed_human
     )
     _announce(f"[cleanup] done: dropped {dropped}")
 
     _announce("[validate-inputs] start")
     report, data = validate_inputs(
-        cfdict_path, cc_cedict_path, confident_path, review_path
+        cfdict_path, cc_cedict_path, human_path, llm_generated_path
     )
     if data is None or not report.passed:
         raise PipelineError("validate-inputs", _failures(report))
     _announce(
         f"[validate-inputs] done: {len(data['cfdict_ids'])} CFDICT, "
-        f"{len(data['confident'])} confident, {len(data['review'])} review"
+        f"{len(data['human_ids'])} human, "
+        f"{len(data['llm_generated'])} generated"
     )
 
     _announce("[assemble] start")
     try:
-        confident_n, full_n = assemble_files(
+        human_n, full_n = assemble_files(
             cfdict_path,
-            confident_path,
-            review_path,
-            out_confident_path,
+            human_path,
+            llm_generated_path,
+            out_human_path,
             out_full_path,
         )
     except (ValueError, OSError) as exc:
         raise PipelineError("assemble", str(exc)) from exc
-    _announce(f"[assemble] done: {confident_n} confident, {full_n} full entries")
+    _announce(f"[assemble] done: {human_n} human, {full_n} full entries")
 
     _announce("[validate-outputs] start")
     out_report = ValidationReport()
     check_outputs(
-        out_confident_path,
+        out_human_path,
         out_full_path,
         data["cfdict_ids"],
-        set(data["confident"]),
-        set(data["review"]),
+        data["human_ids"],
+        set(data["llm_generated"]),
         out_report,
     )
     if not out_report.passed:
@@ -210,11 +208,11 @@ def run_pipeline(
     _announce("[validate-outputs] done: outputs consistent")
 
     _announce("[scope] start")
-    models, prompts = collect_llm_provenance({**data["confident"], **data["review"]})
+    models, prompts = collect_llm_provenance(data["llm_generated"])
     try:
         cfdict_version = sha256_file(cfdict_path)
-        confident_version = sha256_file(confident_path)
-        review_version = sha256_file(review_path)
+        human_version = sha256_file(human_path)
+        llm_generated_version = sha256_file(llm_generated_path)
     except OSError as exc:
         raise PipelineError("scope", f"cannot hash sources: {exc}") from exc
     sources = ReleaseSources(
@@ -222,10 +220,10 @@ def run_pipeline(
         cc_cedict_ids=set(data["cc_glosses"]),
         cfdict_version=cfdict_version,
         cfdict_ids=data["cfdict_ids"],
-        confident_version=confident_version,
-        confident_ids=set(data["confident"]),
-        review_version=review_version,
-        review_ids=set(data["review"]),
+        human_version=human_version,
+        human_ids=data["human_ids"],
+        llm_generated_version=llm_generated_version,
+        llm_generated_ids=set(data["llm_generated"]),
         llm_models=models,
         prompt_versions=prompts,
     )
@@ -243,10 +241,9 @@ def run_pipeline(
         dry_run=False,
         missing_scoped=gen_report.plan.scoped if gen_report else 0,
         generated=gen_report.plan.limited_to if gen_report else 0,
-        confident_new=gen_report.confident_new if gen_report else 0,
-        review_new=gen_report.review_new if gen_report else 0,
+        llm_new=gen_report.llm_new if gen_report else 0,
         cleanup=cleanup_report,
-        confident_n=confident_n,
+        human_n=human_n,
         full_n=full_n,
         scope_markdown=markdown,
     )
@@ -265,9 +262,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--cc-cedict", default="data/cc-cedict/cedict_1_0_ts_utf-8_mdbg.txt.gz"
     )
-    parser.add_argument("--confident", default="data/confident.json")
-    parser.add_argument("--review", default="data/review.json")
-    parser.add_argument("--out-confident", default="output/cfdict-next-confident.u8")
+    parser.add_argument("--human", default="data/human.u8")
+    parser.add_argument("--llm-generated", default="data/llm_generated.json")
+    parser.add_argument("--out-human", default="output/cfdict-next-human.u8")
     parser.add_argument("--out-full", default="output/cfdict-next-full.u8")
     parser.add_argument("--cc-version", default=None)
     parser.add_argument("--batch-size", type=int, default=None)
@@ -295,9 +292,9 @@ def main(argv: list[str] | None = None) -> int:
         report = run_pipeline(
             cfdict_path=args.cfdict,
             cc_cedict_path=args.cc_cedict,
-            confident_path=args.confident,
-            review_path=args.review,
-            out_confident_path=args.out_confident,
+            human_path=args.human,
+            llm_generated_path=args.llm_generated,
+            out_human_path=args.out_human,
             out_full_path=args.out_full,
             config=config,
             cc_version=args.cc_version,
@@ -319,15 +316,15 @@ def main(argv: list[str] | None = None) -> int:
         dropped = 0
         if report.cleanup is not None:
             dropped = (
-                report.cleanup.confident_removed_cfdict
-                + report.cleanup.review_removed_cfdict
-                + report.cleanup.review_removed_confident
+                report.cleanup.human_removed_cfdict
+                + report.cleanup.llm_removed_cfdict
+                + report.cleanup.llm_removed_human
             )
         print(
             f"pipeline done: generated {report.generated}/{report.missing_scoped} "
-            f"({report.confident_new} confident, {report.review_new} review), "
+            f"({report.llm_new} generated), "
             f"cleanup dropped {dropped}, "
-            f"dictionaries {report.confident_n}/{report.full_n} entries"
+            f"dictionaries {report.human_n}/{report.full_n} entries"
         )
         if report.generated < report.missing_scoped:
             print(

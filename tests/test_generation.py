@@ -1,11 +1,10 @@
-"""Tests for the LLM generation pipeline (Phase 5, spec §5, §6, §7, §8).
+"""Tests for the LLM generation pipeline (Phase 5, spec §5, §6, §8).
 
 Entry-level prompts: one entry (full gloss list) in, one record (full
 sense list) out. No network: the HTTP layer is injected as a fake. Covers
 config parsing, prompt rendering, batch validation/mapping/parity/retries,
-record building with provenance, confidence splitting, the identical-sense
-flag, merging, and atomic writes (round-tripped through the real Phase 3
-loader).
+record building with provenance, merging, and atomic writes
+(round-tripped through the real Phase 3 loader).
 """
 
 import json
@@ -151,9 +150,7 @@ def test_few_shot_examples_pass_the_real_validator():
         list(EXAMPLE_ITEMS), make_config(max_retries=0), post=fake_post
     )
     assert outcome.failed == []
-    confidences = [r.confidence for r in outcome.results]
-    assert confidences.count("confident") == 15
-    assert confidences.count("review") == 1
+    assert len(outcome.results) == 16
     assert sum(len(r.senses) for r in outcome.results) == 27
 
 
@@ -175,7 +172,7 @@ def test_few_shot_file_is_self_consistent():
         en = [s for s in example["english"].split("/") if s.strip()]
         fr = [s for s in example["fr"].split("/") if s.strip()]
         assert len(en) == len(fr) >= 1
-        assert example["confidence"] in ("confident", "review")
+        assert "confidence" not in example
     keys = [
         compute_lexical_identity(e["traditional"], e["simplified"], e["pinyin"])
         for e in raw
@@ -247,7 +244,6 @@ def test_generate_batch_maps_entries_to_sense_lists():
                     "id": 1,
                     "word": "行",
                     "senses": [{"gloss": "to walk", "fr": "marcher"}],
-                    "confidence": "review",
                 },
                 {
                     "id": 0,
@@ -256,7 +252,6 @@ def test_generate_batch_maps_entries_to_sense_lists():
                         {"gloss": "China", "fr": "pays d'Asie"},
                         {"gloss": "Middle Kingdom", "fr": "Empire du Milieu"},
                     ],
-                    "confidence": "confident",
                 },
             ]
         )
@@ -269,8 +264,7 @@ def test_generate_batch_maps_entries_to_sense_lists():
         ("China", "pays d'Asie"),
         ("Middle Kingdom", "Empire du Milieu"),
     ]
-    assert results[0].confidence == "confident"
-    assert results[1].confidence == "review"
+    assert len(results) == 2
 
 
 def test_dropped_sense_fails_the_batch():
@@ -281,7 +275,6 @@ def test_dropped_sense_fails_the_batch():
                     "id": 0,
                     "word": "中国",
                     "senses": [{"gloss": "China", "fr": "pays"}],
-                    "confidence": "confident",
                 }
             ]
         )
@@ -302,7 +295,6 @@ def test_invented_sense_fails_the_batch():
                         {"gloss": "Middle Kingdom", "fr": "Empire"},
                         {"gloss": "Cathay", "fr": "Cathay"},
                     ],
-                    "confidence": "confident",
                 }
             ]
         )
@@ -311,7 +303,7 @@ def test_invented_sense_fails_the_batch():
         generate_batch(make_items()[:1], make_config(), post=fake_post)
 
 
-def test_unknown_confidence_defaults_to_review():
+def test_extra_confidence_field_is_ignored():
     def fake_post(*args):
         return chat_body(
             [
@@ -322,6 +314,7 @@ def test_unknown_confidence_defaults_to_review():
                         {"gloss": "China", "fr": "pays"},
                         {"gloss": "Middle Kingdom", "fr": "Empire"},
                     ],
+                    "confidence": "confident",
                 }
             ]
         )
@@ -329,7 +322,7 @@ def test_unknown_confidence_defaults_to_review():
     outcome = generate_batch(make_items()[:1], make_config(), post=fake_post)
     assert outcome.failed == []
     (result,) = outcome.results
-    assert result.confidence == "review"
+    assert [s.gloss for s in result.senses] == ["China", "Middle Kingdom"]
 
 
 def test_missing_id_retries_then_raises():
@@ -346,7 +339,6 @@ def test_missing_id_retries_then_raises():
                         {"gloss": "China", "fr": "pays"},
                         {"gloss": "Middle Kingdom", "fr": "Empire"},
                     ],
-                    "confidence": "confident",
                 }
             ]
         )
@@ -366,7 +358,6 @@ def test_word_mismatch_is_rejected():
                     "id": 0,
                     "word": "美国",
                     "senses": [{"gloss": "China", "fr": "pays"}],
-                    "confidence": "confident",
                 }
             ]
         )
@@ -388,7 +379,7 @@ def test_fenced_json_content_is_accepted():
     from cfdict_next.generation.llm import _parse_content
 
     payload = json.dumps(
-        [{"id": 0, "word": "x", "senses": [], "confidence": "confident"}]
+        [{"id": 0, "word": "x", "senses": []}]
     )
     assert _parse_content(f"```json\n{payload}\n```")[0]["id"] == 0
     assert _parse_content(f"```\n{payload}\n```")[0]["word"] == "x"
@@ -408,7 +399,6 @@ def test_generate_batch_accepts_fenced_content():
                         {"gloss": "China", "fr": "pays"},
                         {"gloss": "Middle Kingdom", "fr": "Empire"},
                     ],
-                    "confidence": "confident",
                 }
             ]
         )
@@ -421,7 +411,6 @@ def test_generate_batch_accepts_fenced_content():
     outcome = generate_batch(make_items()[:1], make_config(), post=fake_post)
     assert outcome.failed == []
     (result,) = outcome.results
-    assert result.confidence == "confident"
     assert [s.gloss for s in result.senses] == ["China", "Middle Kingdom"]
 
 
@@ -441,13 +430,11 @@ def test_partial_salvage_returns_good_and_defers_bad():
                         {"gloss": "China", "fr": "pays"},
                         {"gloss": "Middle Kingdom", "fr": "Empire"},
                     ],
-                    "confidence": "confident",
                 },
                 {
                     "id": 1,
                     "word": "行",
                     "senses": [],
-                    "confidence": "confident",
                 },
             ]
         )
@@ -482,7 +469,6 @@ def test_single_transient_failure_recovers_on_retry():
                     {"gloss": "China", "fr": "pays"},
                     {"gloss": "Middle Kingdom", "fr": "Empire"},
                 ],
-                "confidence": "confident",
             }
         ]
     )
@@ -496,7 +482,6 @@ def test_single_transient_failure_recovers_on_retry():
                         "id": 0,
                         "word": "中国",
                         "senses": [{"gloss": "China", "fr": "pays"}],
-                        "confidence": "confident",
                     }
                 ]
             )
@@ -528,7 +513,7 @@ def provenance():
     return Provenance(cc_cedict_version="mdbg-test", llm_model="test-model")
 
 
-def test_build_records_splits_by_confidence():
+def test_build_records_groups_single_mapping():
     from cfdict_next.generation.llm import GenerationResult
 
     results = [
@@ -536,54 +521,23 @@ def test_build_records_splits_by_confidence():
             key="中國|中国|Zhong1 guo2", traditional="中國", simplified="中国",
             pinyin="Zhong1 guo2",
             senses=(Sense("China", "pays"), Sense("Middle Kingdom", "Empire")),
-            confidence="confident",
         ),
         GenerationResult(
             key="行|行|Xing2", traditional="行", simplified="行",
             pinyin="Xing2", senses=(Sense("to walk", "marcher (?)"),),
-            confidence="review",
         ),
     ]
-    confident, review = build_records(
+    records = build_records(
         results, provenance(), generation_date="2025-01-01T00:00:00+00:00"
     )
-    assert set(confident) == {"中國|中国|Zhong1 guo2"}
-    assert set(review) == {"行|行|Xing2"}
-    record = confident["中國|中国|Zhong1 guo2"]
+    assert set(records) == {"中國|中国|Zhong1 guo2", "行|行|Xing2"}
+    record = records["中國|中国|Zhong1 guo2"]
     assert [s["source_gloss"] for s in record["senses"]] == ["China", "Middle Kingdom"]
     assert record["cc_cedict_version"] == "mdbg-test"
     assert record["llm_model"] == "test-model"
     assert record["prompt_version"] == PROMPT_VERSION
     assert record["generation_date"] == "2025-01-01T00:00:00+00:00"
-
-
-def test_identical_senses_force_review():
-    from cfdict_next.generation.llm import GenerationResult
-
-    results = [
-        GenerationResult(
-            key="K", traditional="T", simplified="S", pinyin="P",
-            senses=(Sense("g1", "same"), Sense("g2", "same")),
-            confidence="confident",
-        ),
-    ]
-    confident, review = build_records(results, provenance(), generation_date="x")
-    assert confident == {}
-    assert set(review) == {"K"}
-
-
-def test_single_sense_is_not_flagged():
-    from cfdict_next.generation.llm import GenerationResult
-
-    results = [
-        GenerationResult(
-            key="K", traditional="T", simplified="S", pinyin="P",
-            senses=(Sense("g1", "only"),),
-            confidence="confident",
-        ),
-    ]
-    confident, review = build_records(results, provenance(), generation_date="x")
-    assert set(confident) == {"K"}
+    assert "confidence" not in record
 
 
 def test_merge_refuses_overwrites():
@@ -600,12 +554,11 @@ def test_write_round_trips_through_loader(tmp_path):
         GenerationResult(
             key="中國|中国|Zhong1 guo2", traditional="中國", simplified="中国",
             pinyin="Zhong1 guo2", senses=(Sense("China", "pays"),),
-            confidence="confident",
         ),
     ]
-    confident, _ = build_records(results, provenance(), generation_date="x")
-    path = tmp_path / "confident.json"
-    write_llm_json(path, confident)
+    records = build_records(results, provenance(), generation_date="x")
+    path = tmp_path / "llm_generated.json"
+    write_llm_json(path, records)
     assert not path.with_suffix(".json.tmp").exists()  # no tmp left behind
     loaded = load_llm_json(path)
     assert list(loaded) == ["中國|中国|Zhong1 guo2"]

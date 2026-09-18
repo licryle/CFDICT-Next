@@ -6,8 +6,8 @@ on:
     branches: [main]
     paths:
       - "data/cfdict.u8"
-      - "data/confident.json"
-      - "data/review.json"
+      - "data/human.u8"
+      - "data/llm_generated.json"
       - "data/cc-cedict/**"
       - "src/**"
       - "scripts/**"
@@ -48,7 +48,7 @@ jobs:
 
       # 2. Assemble both dictionaries (spec §10): CC-CEDICT scope is an
       #    input to assembly via --cc-cedict for provenance; precedence
-      #    CFDICT > confident > review is enforced, overlaps fail (spec §14).
+      #    CFDICT > human > llm_generated is enforced, overlaps fail (spec §14).
       - name: Assemble dictionaries
         run: nix develop --command python scripts/assemble.py
 
@@ -56,7 +56,7 @@ jobs:
       - name: Validate outputs
         run: >-
           nix develop --command python scripts/validate.py
-          --out-confident output/cfdict-next-confident.u8 --out-full output/cfdict-next-full.u8
+          --out-human output/cfdict-next-human.u8 --out-full output/cfdict-next-full.u8
 
       # 4. Scope information for the release notes (spec §12, §16).
       - name: Scope information
@@ -73,5 +73,5 @@ jobs:
           gh release create "$TAG" \
             --title "CFDICT-Next $TAG" \
             --notes-file scope.md \
-            output/cfdict-next-confident.u8 \
+            output/cfdict-next-human.u8 \
             output/cfdict-next-full.u8

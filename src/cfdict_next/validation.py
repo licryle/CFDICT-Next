@@ -5,14 +5,19 @@ overriding or discarding data. Checks:
 
 1. cfdict.u8 parses with zero malformed lines.
 2. CC-CEDICT parses with zero malformed lines.
-3. confident.json / review.json load (structure, identity keys).
-4. No CFDICT∩confident, CFDICT∩review, or confident∩review overlap.
+3. human.u8 parses with zero malformed lines; llm_generated.json loads
+   (structure, identity keys).
+4. No CFDICT∩human, CFDICT∩LLM, or human∩LLM overlap.
 5. Every LLM record covers exactly its CC-CEDICT gloss set
    (accept/reject via assert_gloss_coverage); no LLM record may reference
-   an identity outside CC-CEDICT scope.
+   an identity outside CC-CEDICT scope. Human entries are free-form
+   French (no gloss check) but must not mix hanzi pairs or pinyin:
+   if CC-CEDICT knows the (traditional, simplified) pair, the human
+   pinyin must be one of its observed readings; a novel pair mixing a
+   known traditional with a wrong simplified (or vice versa) fails.
 6. Scope information is consistent with the inputs it claims to describe.
 7. Assembled outputs parse cleanly and contain exactly the expected
-   identity sets (confident = CFDICT+confident, full = +review), with no
+   identity sets (human = CFDICT+human, full = +LLM), with no
    duplicate lines.
 """
 
@@ -62,10 +67,9 @@ def _parse_or_fail(path: str | Path, label: str, report: ValidationReport):
     return entries
 
 
-def _load_or_fail(path: str | Path, label: str, report: ValidationReport,
-                  expected_confidence: str | None = None):
+def _load_or_fail(path: str | Path, label: str, report: ValidationReport):
     try:
-        data = load_llm_json(path, expected_confidence)
+        data = load_llm_json(path)
     except (LLMDataError, OSError) as exc:
         report.checks.append(Check(f"{label} loads", False, str(exc)))
         return None
@@ -75,15 +79,15 @@ def _load_or_fail(path: str | Path, label: str, report: ValidationReport,
 
 def check_no_overlap(
     cfdict_ids: set[str],
-    confident: dict[str, Any],
-    review: dict[str, Any],
+    human_ids: set[str],
+    llm_generated: dict[str, Any],
     report: ValidationReport,
 ) -> None:
     """Check 4: the three datasets are pairwise disjoint where required."""
     pairs = (
-        ("CFDICT/confident", set(confident) & cfdict_ids),
-        ("CFDICT/review", set(review) & cfdict_ids),
-        ("confident/review", set(review) & set(confident)),
+        ("CFDICT/human", set(human_ids) & cfdict_ids),
+        ("CFDICT/LLM", set(llm_generated) & cfdict_ids),
+        ("human/LLM", set(llm_generated) & set(human_ids)),
     )
     for name, overlap in pairs:
         if overlap:
@@ -101,30 +105,86 @@ def check_no_overlap(
 
 def check_gloss_coverage(
     cc_glosses: dict[str, set[str]],
-    confident: dict[str, Any],
-    review: dict[str, Any],
+    llm_generated: dict[str, Any],
     report: ValidationReport,
 ) -> None:
     """Check 5: every LLM record matches its CC-CEDICT gloss set exactly."""
     problems: list[str] = []
-    for label, dataset in (("confident", confident), ("review", review)):
-        for key, record in dataset.items():
-            if key not in cc_glosses:
-                problems.append(f"{label}:{key} is outside CC-CEDICT scope")
-                continue
-            try:
-                assert_gloss_coverage(record, cc_glosses[key])
-            except LLMDataError as exc:
-                problems.append(f"{label}:{exc}")
+    for key, record in llm_generated.items():
+        if key not in cc_glosses:
+            problems.append(f"llm_generated:{key} is outside CC-CEDICT scope")
+            continue
+        try:
+            assert_gloss_coverage(record, cc_glosses[key])
+        except LLMDataError as exc:
+            problems.append(f"llm_generated:{exc}")
     if problems:
         preview = "; ".join(problems[:5])
         report.checks.append(
             Check("LLM gloss coverage", False, f"{len(problems)} problem(s): {preview}")
         )
     else:
-        total = len(confident) + len(review)
         report.checks.append(
-            Check("LLM gloss coverage", True, f"{total} record(s) match CC-CEDICT")
+            Check(
+                "LLM gloss coverage",
+                True,
+                f"{len(llm_generated)} record(s) match CC-CEDICT",
+            )
+        )
+
+
+def check_human_hanzi_pinyin(
+    human_entries: list[Any],
+    cc_pair_pinyins: dict[tuple[str, str], set[str]],
+    cc_trad_to_simp: dict[str, set[str]],
+    cc_simp_to_trad: dict[str, set[str]],
+    report: ValidationReport,
+) -> None:
+    """Check 5b: human hanzi pairs and pinyin must agree with CC-CEDICT.
+
+    No gloss check. Rules per human entry (traditional, simplified, pinyin):
+    - If the exact (trad, simp) pair exists in CC-CEDICT, pinyin must be
+      one of its observed readings.
+    - If the pair is novel but both sides are unseen in CC-CEDICT, allow
+      (genuinely new word).
+    - If the pair is novel yet trad is known with other simp, or simp is
+      known with other trad, fail (mixed hanzi pair).
+    """
+    problems: list[str] = []
+    for entry in human_entries:
+        pair = (entry.traditional, entry.simplified)
+        if pair in cc_pair_pinyins:
+            if entry.pinyin.strip() not in cc_pair_pinyins[pair]:
+                problems.append(
+                    f"human:{entry.lexical_id()} has pinyin "
+                    f"{entry.pinyin.strip()!r}, expected one of "
+                    f"{sorted(cc_pair_pinyins[pair])}"
+                )
+            continue
+        trad_known = pair[0] in cc_trad_to_simp
+        simp_known = pair[1] in cc_simp_to_trad
+        if not trad_known and not simp_known:
+            continue
+        problems.append(
+            f"human:{entry.lexical_id()} mixes hanzi pair "
+            f"({pair[0]!r}, {pair[1]!r}) unseen together in CC-CEDICT"
+        )
+    if problems:
+        preview = "; ".join(problems[:5])
+        report.checks.append(
+            Check(
+                "human hanzi/pinyin",
+                False,
+                f"{len(problems)} problem(s): {preview}",
+            )
+        )
+    else:
+        report.checks.append(
+            Check(
+                "human hanzi/pinyin",
+                True,
+                f"{len(human_entries)} entr(ies) consistent with CC-CEDICT",
+            )
         )
 
 
@@ -142,17 +202,17 @@ def check_scope_info(
 
 
 def check_outputs(
-    confident_u8: str | Path,
+    human_u8: str | Path,
     full_u8: str | Path,
     cfdict_ids: set[str],
-    confident_ids: set[str],
-    review_ids: set[str],
+    human_ids: set[str],
+    llm_ids: set[str],
     report: ValidationReport,
 ) -> None:
     """Check 7: assembled outputs contain exactly the expected identities."""
     for label, path, expected in (
-        ("confident output", confident_u8, cfdict_ids | confident_ids),
-        ("full output", full_u8, cfdict_ids | confident_ids | review_ids),
+        ("human output", human_u8, cfdict_ids | human_ids),
+        ("full output", full_u8, cfdict_ids | human_ids | llm_ids),
     ):
         ids: list[str] = []
         try:
@@ -211,28 +271,44 @@ def check_outputs(
 def validate_inputs(
     cfdict_path: str | Path,
     cc_cedict_path: str | Path,
-    confident_path: str | Path,
-    review_path: str | Path,
+    human_path: str | Path,
+    llm_generated_path: str | Path,
 ) -> tuple[ValidationReport, dict[str, Any] | None]:
     """Validate all release inputs; return (report, loaded data or None)."""
     report = ValidationReport()
     cfdict_entries = _parse_or_fail(cfdict_path, "cfdict.u8", report)
     cc_entries = _parse_or_fail(cc_cedict_path, "CC-CEDICT", report)
-    confident = _load_or_fail(confident_path, "confident.json", report, "confident")
-    review = _load_or_fail(review_path, "review.json", report, "review")
-    if None in (cfdict_entries, cc_entries, confident, review):
+    human_entries = _parse_or_fail(human_path, "human.u8", report)
+    llm_generated = _load_or_fail(llm_generated_path, "llm_generated.json", report)
+    if None in (cfdict_entries, cc_entries, human_entries, llm_generated):
         return report, None
     assert cfdict_entries is not None and cc_entries is not None
-    assert confident is not None and review is not None
+    assert human_entries is not None and llm_generated is not None
     cfdict_ids = {e.lexical_id() for e in cfdict_entries}
+    human_ids = {e.lexical_id() for e in human_entries}
     cc_glosses: dict[str, set[str]] = {}
+    cc_pair_pinyins: dict[tuple[str, str], set[str]] = {}
+    cc_trad_to_simp: dict[str, set[str]] = {}
+    cc_simp_to_trad: dict[str, set[str]] = {}
     for e in cc_entries:
         cc_glosses.setdefault(e.lexical_id(), set()).update(e.definitions)
-    check_no_overlap(cfdict_ids, confident, review, report)
-    check_gloss_coverage(cc_glosses, confident, review, report)
+        cc_pair_pinyins.setdefault(
+            (e.traditional, e.simplified), set()
+        ).add(e.pinyin.strip())
+        cc_trad_to_simp.setdefault(e.traditional, set()).add(e.simplified)
+        cc_simp_to_trad.setdefault(e.simplified, set()).add(e.traditional)
+    check_no_overlap(cfdict_ids, human_ids, llm_generated, report)
+    check_gloss_coverage(cc_glosses, llm_generated, report)
+    check_human_hanzi_pinyin(
+        human_entries,
+        cc_pair_pinyins,
+        cc_trad_to_simp,
+        cc_simp_to_trad,
+        report,
+    )
     return report, {
         "cfdict_ids": cfdict_ids,
+        "human_ids": human_ids,
         "cc_glosses": cc_glosses,
-        "confident": confident,
-        "review": review,
+        "llm_generated": llm_generated,
     }

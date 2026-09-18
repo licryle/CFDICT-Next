@@ -19,7 +19,8 @@ next `generate` run picks up exactly the new entries.
 1. Pull the upstream fix into `data/cfdict.u8` (source URL in
    `data/README.md`).
 2. Run `python scripts/cleanup.py` (no `--dry-run`) — entries now covered
-   by CFDICT leave the LLM datasets. Review the `git diff`, then commit.
+   by CFDICT leave `human.u8` and the LLM dataset. Review the `git diff`,
+   then commit.
 3. Run validation + assembly; the release notes will show the shifted
    coverage.
 

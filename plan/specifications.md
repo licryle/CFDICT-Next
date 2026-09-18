@@ -23,21 +23,18 @@ Each release must be associated with the specific CC-CEDICT version/source used 
 The relevant missing generation scope is:
 CC-CEDICT
     − CFDICT
-    − CFDICT-LLM
-In other words, the LLM process should only generate material that is not already represented by either authoritative CFDICT or existing LLM output.
-4. CFDICT-LLM
-LLM-generated French material is maintained separately from authoritative CFDICT.
-The LLM data consists of two JSON files:
-confident.json
-review.json
-There is intentionally no review.u8.
-JSON is the working/generation format for LLM output. .u8 is used for the assembled dictionary outputs.
-confident.json
-Contains LLM-generated French definitions that are considered sufficiently reliable for automatic inclusion in the confident dictionary.
-review.json
-Contains LLM-generated French definitions that are not sufficiently confident for automatic inclusion in the confident dictionary.
-They remain available for human review.
-The human review/promotion workflow itself is outside this specification.
+    − human.u8
+    − llm_generated.json
+In other words, the LLM process should only generate material that is not already represented by authoritative CFDICT, human curation, or existing LLM output.
+4. Human curation and LLM output
+Human-curated French material lives in data/human.u8 (raw .u8 format,
+free-form French, no gloss-count check). LLM-generated French material
+lives in data/llm_generated.json (single unified file, structural gates
+only — no confidence self-rating).
+JSON is the working/generation format for LLM output. .u8 is used for
+authoritative CFDICT, human curation, and the assembled dictionaries.
+Correcting an LLM entry means adding the fixed entry to human.u8;
+cleanup then drops the superseded LLM record.
 5. LLM generation process
 The LLM generation process is offline.
 For each item in the missing scope:
@@ -72,14 +69,11 @@ Chinese simplified + Pinyin
             │ reference/context
       English CEDICT gloss
 The objective is a proper French dictionary definition of the Chinese sense, rather than a mechanical English → French translation.
-7. LLM confidence
-The generation process produces two classes of output:
-confident.json
-review.json
-A generation belongs in confident.json when it is sufficiently reliable for automatic dictionary assembly.
-A generation belongs in review.json when the available information does not support sufficient confidence.
-Examples of situations that can lead to the review classification include ambiguity or insufficient information to confidently determine the appropriate French definition.
-The precise human review process is not part of this specification.
+7. LLM output (no self-rated confidence)
+The generation process produces a single class of output:
+llm_generated.json. The model is not asked to rate its own confidence —
+every record passing the structural gates (valid JSON, identity match,
+one French sense per CC-CEDICT gloss) is accepted.
 8. LLM provenance
 The JSON generation data should preserve the information necessary to understand where each generated French definition came from.
 The generated data should retain, as appropriate:
@@ -88,7 +82,6 @@ Chinese simplified form;
 Pinyin;
 source CEDICT gloss;
 generated French definition;
-confidence classification;
 source CC-CEDICT version;
 LLM model/version;
 prompt version;
@@ -96,70 +89,60 @@ generation information/date.
 The JSON is therefore the provenance-rich representation of the LLM-generated material.
 The final .u8 files are the assembled dictionary representations.
 9. Cleanup
-A separate cleanup script maintains the LLM datasets as deltas over the authoritative data.
+A separate cleanup script maintains the human and LLM datasets as deltas
+over the authoritative data.
 It applies these rules:
-Remove from confident.json
-If an entry is now present in authoritative cfdict.u8, remove it from confident.json.
-confident.json
-       │
-       └── entry exists in CFDICT → remove
-Remove from review.json
-If an entry is now present in authoritative cfdict.u8, remove it from review.json.
-review.json
-       │
-       └── entry exists in CFDICT → remove
-If an entry exists in confident.json, remove the corresponding entry from review.json.
-review.json
-       │
-       └── entry exists in confident.json → remove
+Remove from human.u8 any entry now present in authoritative cfdict.u8.
+Remove from llm_generated.json any entry now present in cfdict.u8 or human.u8.
 Therefore the precedence between the three datasets is:
 CFDICT
    >
-confident.json
+human.u8
    >
-review.json
-The cleanup process ensures that the LLM datasets do not retain redundant entries already covered by higher-priority sources.
+llm_generated.json
+The cleanup process ensures that lower-priority datasets do not retain
+redundant entries already covered by higher-priority sources.
 10. Assembly
 The final dictionary is assembled by a Python assembly script.
 The authoritative precedence is:
 CFDICT
     >
-confident.json
+human.u8
     >
-review.json
-CFDICT always wins over LLM-generated content.
+llm_generated.json
+Higher-priority sources always win over lower-priority content.
 The assembly produces two output dictionaries.
-10.1 Confident dictionary
+10.1 Human dictionary
 Contains:
 CFDICT
 +
-CFDICT-LLM/confident.json
-No review.json content is included.
+human.u8
+No llm_generated.json content is included.
 This is the conservative assembled dictionary.
 10.2 Full dictionary
 Contains:
 CFDICT
 +
-CFDICT-LLM/confident.json
+human.u8
 +
-CFDICT-LLM/review.json
-This contains all available LLM-generated coverage, including material currently classified for review.
+llm_generated.json
+This contains the complete coverage, including LLM-generated entries.
 Both outputs are .u8 dictionaries.
 11. Output dictionaries
 Each release therefore contains two assembled dictionary outputs:
-CFDICT + confident LLM
+CFDICT + human
 and:
-CFDICT + confident LLM + review LLM
+CFDICT + human + LLM
 The distinction allows consumers to choose between:
-a dictionary containing only authoritative CFDICT plus confident generated additions;
-a dictionary containing the complete generated coverage, including entries pending review.
+a dictionary containing only authoritative CFDICT plus human-curated additions;
+a dictionary containing the complete coverage, including LLM-generated entries.
 12. Scope information
 Each release includes scope information.
 The scope information describes the source and resulting coverage, including the relevant CC-CEDICT scope and the contributions from:
 authoritative CFDICT;
-confident LLM data;
-review LLM data;
-the resulting confident dictionary;
+human curation;
+LLM data;
+the resulting human dictionary;
 the resulting full dictionary.
 Scope information must correspond to the exact source versions used for the release, particularly the CC-CEDICT version.
 Scope information is included with the GitHub release.
@@ -168,16 +151,16 @@ No separate scope.json release artifact is required.
 The project uses a GitHub Actions workflow to automate dictionary assembly and release.
 The workflow is triggered when relevant source data is updated or merged, including changes to:
 cfdict.u8
-confident.json
-review.json
+human.u8
+llm_generated.json
 When triggered, the workflow runs the Python assembly process.
 The assembly process:
 Consults/updates against the relevant CC-CEDICT source.
 Reads the authoritative CFDICT data.
-Reads confident.json.
-Reads review.json.
+Reads human.u8.
+Reads llm_generated.json.
 Applies the precedence rules.
-Produces the confident .u8 dictionary.
+Produces the human .u8 dictionary.
 Produces the full .u8 dictionary.
 Produces the corresponding scope information.
 Publishes a new GitHub release.
@@ -188,13 +171,14 @@ Validation should cover the data relationships established by the project:
 valid .u8 input;
 valid JSON input;
 consistent dictionary entry identity;
-no inappropriate overlap between CFDICT and LLM datasets;
-no inappropriate overlap between confident.json and review.json;
+no inappropriate overlap between CFDICT, human.u8 and llm_generated.json;
+human hanzi/pinyin agreement with CC-CEDICT (no gloss check for human);
+LLM gloss coverage against CC-CEDICT;
 consistent scope information;
 consistent assembled output.
 The assembly should fail when source data violates the expected relationships rather than silently overriding or discarding data.
 15. Entry identity
-The project needs a deterministic way to identify the same lexical entry across CC-CEDICT, CFDICT, confident.json, and review.json.
+The project needs a deterministic way to identify the same lexical entry across CC-CEDICT, CFDICT, human.u8, and llm_generated.json.
 The entry identity should account for multiple lexical entries that can share the same Chinese characters but have different pronunciations.
 The intended lexical identity is based on:
 traditional
@@ -202,7 +186,7 @@ traditional
 simplified
 +
 Pinyin
-Individual CEDICT glosses/senses are additionally tracked during LLM generation so that each generated French definition remains associated with its source gloss.
+Individual CEDICT glosses/senses are additionally tracked during LLM generation so that each generated French definition remains associated with its source gloss. Human entries are free-form French and carry no per-gloss provenance.
 16. Reproducibility
 Each release must be traceable to the source data used to produce it.
 The release should identify the relevant versions/revisions of:

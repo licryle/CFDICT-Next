@@ -12,6 +12,7 @@ from cfdict_next.cleanup import (
     cfdict_identities,
     cleanup_datasets,
     cleanup_files,
+    human_identities,
 )
 
 
@@ -20,7 +21,7 @@ def write(path, content):
     return path
 
 
-def record_for(key, confidence="confident"):
+def record_for(key):
     """Build a valid record whose fields match its identity key."""
     trad, simp, pin = key.split("|")
     return {
@@ -28,7 +29,6 @@ def record_for(key, confidence="confident"):
         "simplified": simp,
         "pinyin": pin,
         "senses": [{"source_gloss": "g", "french_definition": "d"}],
-        "confidence": confidence,
         "cc_cedict_version": "v",
         "llm_model": "m",
         "prompt_version": "p",
@@ -48,94 +48,89 @@ OTHER = "美|美|Mei3"
 FOURTH = "好|好|Hao3"
 
 
-def test_confident_entries_in_cfdict_are_removed():
-    confident = {CHINA: record_for(CHINA), OTHER: record_for(OTHER)}
-    kept, _, report = cleanup_datasets({CHINA}, confident, {})
+def test_human_entries_in_cfdict_are_removed():
+    kept_human, kept_llm, report = cleanup_datasets({CHINA}, {CHINA, OTHER}, {})
+    assert kept_human == {OTHER}
+    assert kept_llm == {}
+    assert report.human_removed_cfdict == 1
+    assert report.human_after == 1
+
+
+def test_llm_entries_in_cfdict_are_removed():
+    llm = {CHINA: record_for(CHINA), OTHER: record_for(OTHER)}
+    _, kept, report = cleanup_datasets({CHINA}, set(), llm)
     assert set(kept) == {OTHER}
-    assert report.confident_removed_cfdict == 1
-    assert report.confident_after == 1
+    assert report.llm_removed_cfdict == 1
 
 
-def test_review_entries_in_cfdict_are_removed():
-    review = {CHINA: record_for(CHINA, "review"), OTHER: record_for(OTHER, "review")}
-    _, kept, report = cleanup_datasets({CHINA}, {}, review)
-    assert set(kept) == {OTHER}
-    assert report.review_removed_cfdict == 1
+def test_llm_entries_in_human_are_removed():
+    # Same identity in both: human wins, LLM copy goes.
+    llm = {WALK: record_for(WALK), OTHER: record_for(OTHER)}
+    kept_h, kept_l, report = cleanup_datasets(set(), {WALK}, llm)
+    assert kept_h == {WALK}
+    assert set(kept_l) == {OTHER}
+    assert report.llm_removed_human == 1
 
 
-def test_review_entries_in_confident_are_removed():
-    # Same identity in both: confident wins, review copy goes.
-    confident = {WALK: record_for(WALK)}
-    review = {WALK: record_for(WALK, "review"), OTHER: record_for(OTHER, "review")}
-    kept_c, kept_r, report = cleanup_datasets(set(), confident, review)
-    assert set(kept_c) == {WALK}
-    assert set(kept_r) == {OTHER}
-    assert report.review_removed_confident == 1
-
-
-def test_cfdict_beats_confident_for_review_too():
+def test_cfdict_beats_human_for_llm_too():
     # Entry in all three datasets: survives only implicitly via CFDICT.
-    confident = {CHINA: record_for(CHINA)}
-    review = {CHINA: record_for(CHINA, "review")}
-    kept_c, kept_r, report = cleanup_datasets({CHINA}, confident, review)
-    assert kept_c == {}
-    assert kept_r == {}
-    assert report.review_removed_cfdict == 1
-    assert report.review_removed_confident == 0  # counted under CFDICT
+    llm = {CHINA: record_for(CHINA)}
+    kept_h, kept_l, report = cleanup_datasets({CHINA}, {CHINA}, llm)
+    assert kept_h == set()
+    assert kept_l == {}
+    assert report.llm_removed_cfdict == 1
+    assert report.llm_removed_human == 0  # counted under CFDICT
 
 
 def test_no_overlap_is_a_no_op():
-    confident = {OTHER: record_for(OTHER)}
-    review = {WALK: record_for(WALK, "review")}
-    kept_c, kept_r, report = cleanup_datasets({CHINA}, confident, review)
-    assert kept_c == confident and kept_r == review
-    assert report.confident_after == 1 and report.review_after == 1
+    llm = {OTHER: record_for(OTHER)}
+    kept_h, kept_l, report = cleanup_datasets({CHINA}, {WALK}, llm)
+    assert kept_h == {WALK} and kept_l == llm
+    assert report.human_after == 1 and report.llm_after == 1
 
 
 def test_cleanup_files_end_to_end(tmp_path):
     cfdict = write(tmp_path / "cfdict.u8", CFDICT_SAMPLE)
-    confident_p = write(
-        tmp_path / "confident.json",
-        json.dumps(
-            {CHINA: record_for(CHINA), OTHER: record_for(OTHER)},
-            ensure_ascii=False,
-        ),
+    human_p = write(
+        tmp_path / "human.u8",
+        "行 行 [Xing2] /marcher/\n美 美 [Mei3] /beau/\n",
     )
-    review_p = write(
-        tmp_path / "review.json",
+    llm_p = write(
+        tmp_path / "llm_generated.json",
         json.dumps(
             {
-                WALK: record_for(WALK, "review"),
-                OTHER: record_for(OTHER, "review"),
-                FOURTH: record_for(FOURTH, "review"),
+                CHINA: record_for(CHINA),
+                OTHER: record_for(OTHER),
+                FOURTH: record_for(FOURTH),
             },
             ensure_ascii=False,
         ),
     )
-    report = cleanup_files(cfdict, confident_p, review_p)
-    # CHINA dropped from confident (now in CFDICT); WALK dropped from
-    # review (now in CFDICT); OTHER dropped from review (kept confident);
-    # FOURTH survives in review (nowhere else).
-    assert report.confident_after == 1
-    assert report.review_after == 1
-    assert set(json.loads(confident_p.read_text(encoding="utf-8"))) == {OTHER}
-    assert set(json.loads(review_p.read_text(encoding="utf-8"))) == {FOURTH}
+    report = cleanup_files(cfdict, human_p, llm_p)
+    # WALK dropped from human (now in CFDICT); CHINA dropped from LLM
+    # (now in CFDICT); OTHER dropped from LLM (kept human);
+    # FOURTH survives in LLM (nowhere else).
+    assert report.human_after == 1
+    assert report.llm_after == 1
+    from cfdict_next.parser.u8 import parse_u8_file
+
+    human_entries, _ = parse_u8_file(human_p)
+    assert {e.lexical_id() for e in human_entries} == {OTHER}
+    assert set(json.loads(llm_p.read_text(encoding="utf-8"))) == {FOURTH}
 
 
 def test_dry_run_writes_nothing(tmp_path):
     cfdict = write(tmp_path / "cfdict.u8", CFDICT_SAMPLE)
-    confident_p = write(
-        tmp_path / "confident.json", json.dumps({CHINA: record_for(CHINA)})
+    human_p = write(tmp_path / "human.u8", "中國 中国 [Zhong1 guo2] /Chine/\n")
+    llm_p = write(tmp_path / "llm_generated.json", json.dumps({}))
+    before_h, before_l = (
+        human_p.read_bytes(),
+        llm_p.read_bytes(),
     )
-    review_p = write(tmp_path / "review.json", json.dumps({}))
-    before_c, before_r = (
-        confident_p.read_bytes(),
-        review_p.read_bytes(),
-    )
-    report = cleanup_files(cfdict, confident_p, review_p, dry_run=True)
-    assert report.confident_removed_cfdict == 1
-    assert confident_p.read_bytes() == before_c
-    assert review_p.read_bytes() == before_r
+    report = cleanup_files(cfdict, human_p, llm_p, dry_run=True)
+    assert report.human_removed_cfdict == 1
+    assert human_p.read_bytes() == before_h
+    assert llm_p.read_bytes() == before_l
 
 
 def test_malformed_cfdict_fails_loudly(tmp_path):
@@ -144,9 +139,15 @@ def test_malformed_cfdict_fails_loudly(tmp_path):
         cfdict_identities(cfdict)
 
 
+def test_malformed_human_fails_loudly(tmp_path):
+    human = write(tmp_path / "human.u8", "this is not an entry\n")
+    with pytest.raises(ValueError, match="malformed"):
+        human_identities(human)
+
+
 def test_invalid_llm_json_fails_loudly(tmp_path):
     cfdict = write(tmp_path / "cfdict.u8", CFDICT_SAMPLE)
-    confident_p = write(tmp_path / "confident.json", "{bad json")
-    review_p = write(tmp_path / "review.json", json.dumps({}))
+    human_p = write(tmp_path / "human.u8", "")
+    llm_p = write(tmp_path / "llm_generated.json", "{bad json")
     with pytest.raises(Exception, match="[Ii]nvalid JSON"):
-        cleanup_files(cfdict, confident_p, review_p)
+        cleanup_files(cfdict, human_p, llm_p)

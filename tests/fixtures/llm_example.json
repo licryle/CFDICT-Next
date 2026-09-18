@@ -28,7 +28,6 @@
           "french_definition": "nom historique de la Chine, l'« Empire du Milieu »"
         }
       ],
-      "confidence": "confident",
       "cc_cedict_version": "mdbg-2025-09-12",
       "llm_model": "example-model-v1",
       "prompt_version": "p1",
@@ -44,7 +43,6 @@
           "french_definition": "marcher, se déplacer à pied"
         }
       ],
-      "confidence": "review",
       "cc_cedict_version": "mdbg-2025-09-12",
       "llm_model": "example-model-v1",
       "prompt_version": "p1",

@@ -34,10 +34,10 @@ class GenerationItem:
 
 
 # Few-shot examples: curated user-supplied pairs in
-# src/generation/assets/few_shot_examples.json (english/fr split on "/" into glosses),
-# plus a review case so the model sees every verdict used. The curated
-# pairs must satisfy gloss parity themselves — the model is shown nothing
-# the validator would reject. tests/test_generation.py enforces all this.
+# src/generation/assets/few_shot_examples.json (english/fr split on "/" into glosses).
+# The curated pairs must satisfy gloss parity themselves — the model is
+# shown nothing the validator would reject. tests/test_generation.py
+# enforces all this.
 FEW_SHOT_PATH = "few_shot_examples.json"
 
 
@@ -64,11 +64,6 @@ def _load_few_shot() -> tuple[list[GenerationItem], list[dict]]:
                 f"few-shot example {n} ({example['simplified']}): "
                 f"{len(glosses)} English vs {len(frs)} French segments"
             )
-        if example.get("confidence", "confident") not in ("confident", "review"):
-            raise ValueError(
-                f"few-shot example {n}: bad confidence "
-                f"{example.get('confidence')!r}"
-            )
         key = compute_lexical_identity(
             example["traditional"], example["simplified"], example["pinyin"]
         )
@@ -89,7 +84,6 @@ def _load_few_shot() -> tuple[list[GenerationItem], list[dict]]:
                     {"gloss": gloss, "fr": fr}
                     for gloss, fr in zip(glosses, frs)
                 ],
-                "confidence": example.get("confidence", "confident"),
             }
         )
     return items, outputs

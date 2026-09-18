@@ -32,3 +32,26 @@ be traceable to exact source versions).
   snapshot); parsers normalize before matching.
 - This file is the forked authoritative source (spec §2); future updates
   arrive via pull requests against it.
+
+## Human curation (free-form French)
+
+- File: `human.u8`
+- Format: CEDICT — `traditional simplified [pinyin] /définition1/définition2/.../`,
+  `#` lines are metadata/comments.
+- Precedence: CFDICT > human.u8 > llm_generated.json (spec §9). Entries
+  overlapping CFDICT are removed by `scripts/cleanup.py`.
+- Validation: no gloss-count check; when CC-CEDICT knows the
+  (traditional, simplified) pair, the pinyin must be one of its observed
+  readings, and mixed hanzi pairs fail (spec §14).
+
+## LLM-generated French (unified dataset)
+
+- File: `llm_generated.json` (77,077 records merged from the former
+  `confident.json` + `review.json`; per-record `confidence` field dropped
+  2026-09-18 — the model is no longer asked to rate itself).
+- Format: JSON object mapping `traditional|simplified|pinyin` identity →
+  record (schema `schemas/llm_entry.json`); one sense per CC-CEDICT gloss.
+- Precedence: lowest. Entries overlapping CFDICT or human.u8 are removed
+  by `scripts/cleanup.py`.
+- Validation: every record must cover exactly its CC-CEDICT gloss set and
+  reference an identity inside CC-CEDICT scope (spec §14).

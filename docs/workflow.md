@@ -5,7 +5,7 @@
 The `Assemble and release` workflow runs on every push to `main` that
 touches release-relevant inputs, and on manual dispatch:
 
-- `data/cfdict.u8`, `data/confident.json`, `data/review.json`
+- `data/cfdict.u8`, `data/human.u8`, `data/llm_generated.json`
 - `data/cc-cedict/**` (scope changes)
 - `src/**`, `scripts/**`, `flake.nix` (tooling changes)
 - the workflow file itself
@@ -15,7 +15,7 @@ touches release-relevant inputs, and on manual dispatch:
 1. **Test suite** (`test` job) — the full pytest suite must pass first.
 2. **Validate inputs** — all §14 data relationships are gated before
    anything is produced. A failure names the violated check.
-3. **Assemble** — `scripts/assemble.py` writes `output/cfdict-next-confident.u8`
+3. **Assemble** — `scripts/assemble.py` writes `output/cfdict-next-human.u8`
    and `output/cfdict-next-full.u8` (gitignored build artifacts, never committed).
 4. **Validate outputs** — assembled files are checked against the inputs
    (exact identity sets, no duplicate lines).
@@ -26,8 +26,8 @@ touches release-relevant inputs, and on manual dispatch:
 
 ## Deliberately not automated: cleanup
 
-Overlaps (a CFDICT-covered entry lingering in the LLM datasets) **fail**
-the workflow instead of being auto-fixed. Run `scripts/cleanup.py`
+Overlaps (a higher-priority entry lingering in a lower-priority dataset)
+**fail** the workflow instead of being auto-fixed. Run `scripts/cleanup.py`
 locally, review the diff, and commit it — dataset deletions deserve a
 human-readable commit, not a silent workflow push. The validation output
 tells you exactly which identities overlap.

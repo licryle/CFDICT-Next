@@ -13,8 +13,8 @@ import pytest
 
 from cfdict_next.assembly import (
     CFDICT_SECTION_HEADER,
-    CONFIDENT_SECTION_HEADER,
-    REVIEW_SECTION_HEADER,
+    HUMAN_SECTION_HEADER,
+    LLM_SECTION_HEADER,
     assemble,
     assemble_files,
     assemble_sections,
@@ -34,7 +34,7 @@ def entry(trad="中國", simp="中国", pin="Zhong1 guo2", defs=("Chine",)):
     return DictionaryEntry(traditional=trad, simplified=simp, pinyin=pin, definitions=defs)
 
 
-def llm_record_for(key, senses=(("China", "Chine"),), confidence="confident"):
+def llm_record_for(key, senses=(("China", "Chine"),)):
     """Build an LLM record whose identity fields match its key."""
     trad, simp, pin = key.split("|")
     return {
@@ -44,7 +44,6 @@ def llm_record_for(key, senses=(("China", "Chine"),), confidence="confident"):
         "senses": [
             {"source_gloss": g, "french_definition": d} for g, d in senses
         ],
-        "confidence": confidence,
         "cc_cedict_version": "v",
         "llm_model": "m",
         "prompt_version": "p",
@@ -52,37 +51,40 @@ def llm_record_for(key, senses=(("China", "Chine"),), confidence="confident"):
     }
 
 
-def llm_record(senses=(("China", "Chine"),), confidence="confident"):
-    return llm_record_for("美|美|Mei3", senses, confidence)
+def llm_record(senses=(("China", "Chine"),)):
+    return llm_record_for("美|美|Mei3", senses)
 
 
 def test_cfdict_always_wins_and_overlap_raises():
     cfdict = [entry()]
-    confident = {"中國|中国|Zhong1 guo2": llm_record()}
+    human = [entry()]
     with pytest.raises(ValueError, match="overlap CFDICT"):
-        assemble(cfdict, confident, {})
+        assemble(cfdict, human, {})
+    llm = {"中國|中国|Zhong1 guo2": llm_record()}
+    with pytest.raises(ValueError, match="overlap CFDICT"):
+        assemble(cfdict, [], llm)
 
 
-def test_confident_beats_review_and_overlap_raises():
-    review = {"美|美|Mei3": llm_record(confidence="review")}
-    confident = {"美|美|Mei3": llm_record()}
-    with pytest.raises(ValueError, match="overlap CFDICT/confident"):
-        assemble([], confident, review)
+def test_human_beats_llm_and_overlap_raises():
+    human = [entry("美", "美", "Mei3", ("beau",))]
+    llm = {"美|美|Mei3": llm_record()}
+    with pytest.raises(ValueError, match="overlap CFDICT/human"):
+        assemble([], human, llm)
 
 
-def test_review_overlapping_cfdict_raises():
+def test_llm_overlapping_cfdict_raises():
     cfdict = [entry()]
-    review = {"中國|中国|Zhong1 guo2": llm_record(confidence="review")}
-    with pytest.raises(ValueError, match="overlap CFDICT/confident"):
-        assemble(cfdict, {}, review)
+    llm = {"中國|中国|Zhong1 guo2": llm_record()}
+    with pytest.raises(ValueError, match="overlap CFDICT/human"):
+        assemble(cfdict, [], llm)
 
 
-def test_confident_dict_excludes_review_full_includes_it():
+def test_human_dict_excludes_llm_full_includes_it():
     cfdict = [entry()]
-    confident = {"美|美|Mei3": llm_record_for("美|美|Mei3")}
-    review = {"好|好|Hao3": llm_record_for("好|好|Hao3", confidence="review")}
-    confident_entries, full_entries = assemble(cfdict, confident, review)
-    assert [e.lexical_id() for e in confident_entries] == [
+    human = [entry("美", "美", "Mei3", ("beau",))]
+    llm = {"好|好|Hao3": llm_record_for("好|好|Hao3")}
+    human_entries, full_entries = assemble(cfdict, human, llm)
+    assert [e.lexical_id() for e in human_entries] == [
         "中國|中国|Zhong1 guo2",
         "美|美|Mei3",
     ]
@@ -94,14 +96,17 @@ def test_confident_dict_excludes_review_full_includes_it():
     assert full_entries[2].definitions == ("Chine",)
 
 
-def test_order_is_cfdict_then_sorted_llm():
+def test_order_is_cfdict_then_human_then_sorted_llm():
     cfdict = [entry("中", "中", "Zhong1", ("milieu",)), entry()]
-    confident = {
+    human = [entry("美", "美", "Mei3", ("beau",))]
+    llm = {
         "行|行|Xing2": llm_record_for("行|行|Xing2"),
-        "美|美|Mei3": llm_record_for("美|美|Mei3"),
+        "好|好|Hao3": llm_record_for("好|好|Hao3"),
     }
-    confident_entries, _ = assemble(cfdict, confident, {})
-    assert [e.simplified for e in confident_entries] == ["中", "中国", "美", "行"]
+    human_entries, _ = assemble(cfdict, human, llm)
+    assert [e.simplified for e in human_entries] == ["中", "中国", "美"]
+    _, full = assemble(cfdict, human, llm)
+    assert [e.simplified for e in full] == ["中", "中国", "美", "好", "行"]
 
 
 def test_record_to_entry_preserves_sense_order():
@@ -168,14 +173,14 @@ def test_real_files_round_trip_without_loss():
 
 def test_assemble_is_deterministic(tmp_path):
     cfdict = [entry(), entry("中", "中", "Zhong1", ("milieu",))]
-    confident = {"美|美|Mei3": llm_record_for("美|美|Mei3")}
-    review = {"好|好|Hao3": llm_record_for("好|好|Hao3", confidence="review")}
+    human = [entry("美", "美", "Mei3", ("beau",))]
+    llm = {"好|好|Hao3": llm_record_for("好|好|Hao3")}
     out1_c, out1_f = tmp_path / "c1.u8", tmp_path / "f1.u8"
     out2_c, out2_f = tmp_path / "c2.u8", tmp_path / "f2.u8"
-    ce, fe = assemble(cfdict, confident, review)
+    ce, fe = assemble(cfdict, human, llm)
     write_u8_file(out1_c, ce)
     write_u8_file(out1_f, fe)
-    ce2, fe2 = assemble(cfdict, confident, review)
+    ce2, fe2 = assemble(cfdict, human, llm)
     write_u8_file(out2_c, ce2)
     write_u8_file(out2_f, fe2)
     assert out1_c.read_bytes() == out2_c.read_bytes()
@@ -183,16 +188,16 @@ def test_assemble_is_deterministic(tmp_path):
 
 
 def test_assemble_files_with_empty_llm_round_trips_cfdict(tmp_path):
-    # No LLM data: both outputs equal CFDICT content modulo dup-merge +
+    # No human/LLM data: both outputs equal CFDICT content modulo dup-merge +
     # newline normalization — verified entry by entry.
-    out_c = tmp_path / "confident.u8"
+    out_c = tmp_path / "human.u8"
     out_f = tmp_path / "full.u8"
-    (tmp_path / "c.json").write_text("{}", encoding="utf-8")
-    (tmp_path / "r.json").write_text("{}", encoding="utf-8")
-    confident_n, full_n = assemble_files(
-        CFDICT, tmp_path / "c.json", tmp_path / "r.json", out_c, out_f
+    (tmp_path / "h.u8").write_text("", encoding="utf-8")
+    (tmp_path / "l.json").write_text("{}", encoding="utf-8")
+    human_n, full_n = assemble_files(
+        CFDICT, tmp_path / "h.u8", tmp_path / "l.json", out_c, out_f
     )
-    assert confident_n == full_n
+    assert human_n == full_n
     source_entries, errors = parse_u8_file(CFDICT)
     assert errors == []
     out_entries, out_errors = parse_u8_file(out_c)
@@ -207,24 +212,26 @@ def test_assemble_files_with_empty_llm_round_trips_cfdict(tmp_path):
 
 def test_outputs_carry_section_headers_in_order(tmp_path):
     cfdict = [entry()]
-    confident = {"美|美|Mei3": llm_record_for("美|美|Mei3")}
-    review = {"好|好|Hao3": llm_record_for("好|好|Hao3", confidence="review")}
+    human = [entry("美", "美", "Mei3", ("beau",))]
+    llm = {"好|好|Hao3": llm_record_for("好|好|Hao3")}
     c, f = tmp_path / "c.u8", tmp_path / "f.u8"
-    (tmp_path / "c.json").write_text(json.dumps(confident), encoding="utf-8")
-    (tmp_path / "r.json").write_text(json.dumps(review), encoding="utf-8")
+    (tmp_path / "l.json").write_text(json.dumps(llm), encoding="utf-8")
+    (tmp_path / "h.u8").write_text(
+        format_u8_entry(human[0]), encoding="utf-8"
+    )
     (tmp_path / "cfdict.u8").write_text(
         format_u8_entry(entry()), encoding="utf-8"
     )
-    assemble_files(tmp_path / "cfdict.u8", tmp_path / "c.json",
-                     tmp_path / "r.json", c, f)
+    assemble_files(tmp_path / "cfdict.u8", tmp_path / "h.u8",
+                     tmp_path / "l.json", c, f)
     c_lines = c.read_text(encoding="utf-8").splitlines()
     assert c_lines[0] == CFDICT_SECTION_HEADER
-    assert c_lines[2] == CONFIDENT_SECTION_HEADER
-    assert REVIEW_SECTION_HEADER not in c_lines
+    assert c_lines[2] == HUMAN_SECTION_HEADER
+    assert LLM_SECTION_HEADER not in c_lines
     f_lines = f.read_text(encoding="utf-8").splitlines()
     assert f_lines[0] == CFDICT_SECTION_HEADER
-    assert f_lines[2] == CONFIDENT_SECTION_HEADER
-    assert f_lines[4] == REVIEW_SECTION_HEADER
+    assert f_lines[2] == HUMAN_SECTION_HEADER
+    assert f_lines[4] == LLM_SECTION_HEADER
     # Headers parse as comments: entry content is unchanged.
     out_entries, errors = parse_u8_file(f)
     assert errors == []
@@ -237,8 +244,8 @@ def test_empty_sections_omit_their_header(tmp_path):
     out = tmp_path / "o.u8"
     write_sectioned_u8_file(out, [
         (CFDICT_SECTION_HEADER, [entry()]),
-        (CONFIDENT_SECTION_HEADER, []),
-        (REVIEW_SECTION_HEADER, []),
+        (HUMAN_SECTION_HEADER, []),
+        (LLM_SECTION_HEADER, []),
     ])
     lines = out.read_text(encoding="utf-8").splitlines()
     assert lines == [CFDICT_SECTION_HEADER, format_u8_entry(entry()).strip()]
@@ -246,14 +253,14 @@ def test_empty_sections_omit_their_header(tmp_path):
 
 def test_sections_match_assemble_splits():
     cfdict = [entry()]
-    confident = {"美|美|Mei3": llm_record_for("美|美|Mei3")}
-    review = {"好|好|Hao3": llm_record_for("好|好|Hao3", confidence="review")}
-    c, ce, re_ = assemble_sections(cfdict, confident, review)
+    human = [entry("美", "美", "Mei3", ("beau",))]
+    llm = {"好|好|Hao3": llm_record_for("好|好|Hao3")}
+    c, he, le = assemble_sections(cfdict, human, llm)
     assert c == cfdict
-    assert [e.lexical_id() for e in ce] == ["美|美|Mei3"]
-    assert [e.lexical_id() for e in re_] == ["好|好|Hao3"]
-    flat_c, flat_f = assemble(cfdict, confident, review)
-    assert flat_c == c + ce and flat_f == c + ce + re_
+    assert [e.lexical_id() for e in he] == ["美|美|Mei3"]
+    assert [e.lexical_id() for e in le] == ["好|好|Hao3"]
+    flat_c, flat_f = assemble(cfdict, human, llm)
+    assert flat_c == c + he and flat_f == c + he + le
 
 
 def test_cli_smoke(tmp_path, capsys):
@@ -261,14 +268,15 @@ def test_cli_smoke(tmp_path, capsys):
 
     c = tmp_path / "cfdict.u8"
     c.write_text("中國 中国 [Zhong1 guo2] /Chine/\n", encoding="utf-8")
-    for name in ("c.json", "r.json"):
-        (tmp_path / name).write_text("{}", encoding="utf-8")
+    h = tmp_path / "h.u8"
+    h.write_text("", encoding="utf-8")
+    (tmp_path / "l.json").write_text("{}", encoding="utf-8")
     rc = cli_main(
         [
             "--cfdict", str(c),
-            "--confident", str(tmp_path / "c.json"),
-            "--review", str(tmp_path / "r.json"),
-            "--out-confident", str(tmp_path / "o_c.u8"),
+            "--human", str(h),
+            "--llm-generated", str(tmp_path / "l.json"),
+            "--out-human", str(tmp_path / "o_c.u8"),
             "--out-full", str(tmp_path / "o_f.u8"),
         ]
     )
@@ -276,4 +284,4 @@ def test_cli_smoke(tmp_path, capsys):
     assert (tmp_path / "o_c.u8").read_text(encoding="utf-8") == (
         (tmp_path / "o_f.u8").read_text(encoding="utf-8")
     )
-    assert "confident 1 entries" in capsys.readouterr().out
+    assert "human 1 entries" in capsys.readouterr().out

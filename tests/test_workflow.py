@@ -19,6 +19,7 @@ REPO = Path(__file__).resolve().parent.parent
 WORKFLOW = REPO / ".github" / "workflows" / "assemble.yml"
 
 CFDICT_SAMPLE = "中國 中国 [Zhong1 guo2] /Chine/\n"
+HUMAN_SAMPLE = "美 美 [Mei3] /beau/\n"
 CC_SAMPLE = (
     "中國 中国 [Zhong1 guo2] /China/Middle Kingdom/\n"
     "美 美 [Mei3] /beautiful/\n"
@@ -27,14 +28,13 @@ CC_SAMPLE = (
 )
 
 
-def record_for(key, glosses, confidence="confident"):
+def record_for(key, glosses):
     trad, simp, pin = key.split("|")
     return {
         "traditional": trad,
         "simplified": simp,
         "pinyin": pin,
         "senses": [{"source_gloss": g, "french_definition": f"fr-{g}"} for g in glosses],
-        "confidence": confidence,
         "cc_cedict_version": "v",
         "llm_model": "m",
         "prompt_version": "p",
@@ -51,8 +51,8 @@ def test_workflow_triggers_on_source_data():
     paths = on["push"]["paths"]
     for watched in (
         "data/cfdict.u8",
-        "data/confident.json",
-        "data/review.json",
+        "data/human.u8",
+        "data/llm_generated.json",
     ):
         assert watched in paths, watched
     assert on["push"]["branches"] == ["main"]
@@ -101,12 +101,18 @@ def test_actions_are_pinned_to_major_versions():
 
 
 def run(*args, cwd):
+    import os
+
+    env = dict(os.environ)
+    env["PYTHONUTF8"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
     return subprocess.run(
         [sys.executable, *args],
         cwd=cwd,
         capture_output=True,
         text=True,
         timeout=120,
+        env=env,
     )
 
 
@@ -114,16 +120,10 @@ def run(*args, cwd):
 def pipeline_data(tmp_path):
     (tmp_path / "cfdict.u8").write_text(CFDICT_SAMPLE, encoding="utf-8")
     (tmp_path / "cc.u8").write_text(CC_SAMPLE, encoding="utf-8")
-    (tmp_path / "confident.json").write_text(
+    (tmp_path / "human.u8").write_text(HUMAN_SAMPLE, encoding="utf-8")
+    (tmp_path / "llm_generated.json").write_text(
         json.dumps(
-            {"美|美|Mei3": record_for("美|美|Mei3", ["beautiful"])},
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
-    )
-    (tmp_path / "review.json").write_text(
-        json.dumps(
-            {"行|行|Xing2": record_for("行|行|Xing2", ["to walk"], "review")},
+            {"行|行|Xing2": record_for("行|行|Xing2", ["to walk"])},
             ensure_ascii=False,
         ),
         encoding="utf-8",
@@ -134,8 +134,8 @@ def pipeline_data(tmp_path):
 def test_pipeline_end_to_end(pipeline_data, tmp_path):
     d = pipeline_data
     out_c, out_f, scope = (
-        tmp_path / "confident.u8",
-        tmp_path / "full.u8",
+        tmp_path / "out_human.u8",
+        tmp_path / "out_full.u8",
         tmp_path / "scope.md",
     )
     # 1. validate inputs
@@ -143,8 +143,8 @@ def test_pipeline_end_to_end(pipeline_data, tmp_path):
         "scripts/validate.py",
         "--cfdict", str(d / "cfdict.u8"),
         "--cc-cedict", str(d / "cc.u8"),
-        "--confident", str(d / "confident.json"),
-        "--review", str(d / "review.json"),
+        "--human", str(d / "human.u8"),
+        "--llm-generated", str(d / "llm_generated.json"),
         cwd=REPO,
     )
     assert r.returncode == 0, r.stderr or r.stdout
@@ -152,9 +152,9 @@ def test_pipeline_end_to_end(pipeline_data, tmp_path):
     r = run(
         "scripts/assemble.py",
         "--cfdict", str(d / "cfdict.u8"),
-        "--confident", str(d / "confident.json"),
-        "--review", str(d / "review.json"),
-        "--out-confident", str(out_c),
+        "--human", str(d / "human.u8"),
+        "--llm-generated", str(d / "llm_generated.json"),
+        "--out-human", str(out_c),
         "--out-full", str(out_f),
         cwd=REPO,
     )
@@ -165,9 +165,9 @@ def test_pipeline_end_to_end(pipeline_data, tmp_path):
         "scripts/validate.py",
         "--cfdict", str(d / "cfdict.u8"),
         "--cc-cedict", str(d / "cc.u8"),
-        "--confident", str(d / "confident.json"),
-        "--review", str(d / "review.json"),
-        "--out-confident", str(out_c),
+        "--human", str(d / "human.u8"),
+        "--llm-generated", str(d / "llm_generated.json"),
+        "--out-human", str(out_c),
         "--out-full", str(out_f),
         cwd=REPO,
     )
@@ -177,25 +177,25 @@ def test_pipeline_end_to_end(pipeline_data, tmp_path):
         "scripts/scope_info.py",
         "--cfdict", str(d / "cfdict.u8"),
         "--cc-cedict", str(d / "cc.u8"),
-        "--confident", str(d / "confident.json"),
-        "--review", str(d / "review.json"),
+        "--human", str(d / "human.u8"),
+        "--llm-generated", str(d / "llm_generated.json"),
         "--out", str(scope),
         cwd=REPO,
     )
     assert r.returncode == 0, r.stderr or r.stdout
     text = scope.read_text(encoding="utf-8")
-    assert "Confident dictionary: 2 entries" in text  # CFDICT + confident
-    assert "Full dictionary: 3 entries" in text  # + review
+    assert "Human dictionary: 2 entries" in text  # CFDICT + human
+    assert "Full dictionary: 3 entries" in text  # + llm
     assert "Missing scope (still to generate): 1" in text  # 學 only
     # 5. assembled content is exactly what was validated
-    assert "美 美 [Mei3] /fr-beautiful/" in out_c.read_text(encoding="utf-8")
+    assert "美 美 [Mei3] /beau/" in out_c.read_text(encoding="utf-8")
     assert "行 行 [Xing2] /fr-to walk/" in out_f.read_text(encoding="utf-8")
     assert "行 行" not in out_c.read_text(encoding="utf-8")
 
 
 def test_pipeline_fails_fast_on_overlap(pipeline_data):
     d = pipeline_data
-    (d / "confident.json").write_text(
+    (d / "llm_generated.json").write_text(
         json.dumps(
             {"中國|中国|Zhong1 guo2": record_for("中國|中国|Zhong1 guo2", ["China"])},
             ensure_ascii=False,
@@ -206,8 +206,8 @@ def test_pipeline_fails_fast_on_overlap(pipeline_data):
         "scripts/validate.py",
         "--cfdict", str(d / "cfdict.u8"),
         "--cc-cedict", str(d / "cc.u8"),
-        "--confident", str(d / "confident.json"),
-        "--review", str(d / "review.json"),
+        "--human", str(d / "human.u8"),
+        "--llm-generated", str(d / "llm_generated.json"),
         cwd=REPO,
     )
     assert r.returncode == 1

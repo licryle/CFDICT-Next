@@ -1,8 +1,8 @@
 """Release scope information (spec §12, §16).
 
 Each release describes its source and resulting coverage: the CC-CEDICT
-scope, the contributions of authoritative CFDICT / confident LLM / review
-LLM data, and the two assembled dictionaries. Every figure derives from
+scope, the contributions of authoritative CFDICT / human curation / LLM
+data, and the two assembled dictionaries. Every figure derives from
 the exact inputs of that release — versions are content hashes unless the
 caller supplies explicit labels — so a release is traceable to the source
 data that produced it.
@@ -32,10 +32,10 @@ class ReleaseSources:
     cc_cedict_ids: set[str] = field(default_factory=set)
     cfdict_version: str = ""
     cfdict_ids: set[str] = field(default_factory=set)
-    confident_version: str = ""
-    confident_ids: set[str] = field(default_factory=set)
-    review_version: str = ""
-    review_ids: set[str] = field(default_factory=set)
+    human_version: str = ""
+    human_ids: set[str] = field(default_factory=set)
+    llm_generated_version: str = ""
+    llm_generated_ids: set[str] = field(default_factory=set)
     llm_models: tuple[str, ...] = ()
     prompt_versions: tuple[str, ...] = ()
 
@@ -67,8 +67,8 @@ def build_scope_info(
     statistics = compute_scope_statistics(
         sources.cc_cedict_ids,
         sources.cfdict_ids,
-        sources.confident_ids,
-        sources.review_ids,
+        sources.human_ids,
+        sources.llm_generated_ids,
     )
     return {
         "generated_at": generated_at,
@@ -81,13 +81,13 @@ def build_scope_info(
                 "version": sources.cfdict_version,
                 "entries": statistics["cfdict_total"],
             },
-            "llm_confident": {
-                "version": sources.confident_version,
-                "entries": statistics["llm_confident_total"],
+            "human": {
+                "version": sources.human_version,
+                "entries": statistics["human_total"],
             },
-            "llm_review": {
-                "version": sources.review_version,
-                "entries": statistics["llm_review_total"],
+            "llm_generated": {
+                "version": sources.llm_generated_version,
+                "entries": statistics["llm_generated_total"],
             },
         },
         "provenance": {
@@ -114,19 +114,19 @@ def render_scope_markdown(info: dict[str, Any]) -> str:
         f"| {sources['cc_cedict']['entries']} |",
         f"| CFDICT (authoritative) | {sources['cfdict']['version']} "
         f"| {sources['cfdict']['entries']} |",
-        f"| CFDICT-LLM confident | {sources['llm_confident']['version']} "
-        f"| {sources['llm_confident']['entries']} |",
-        f"| CFDICT-LLM review | {sources['llm_review']['version']} "
-        f"| {sources['llm_review']['entries']} |",
+        f"| Human (curated) | {sources['human']['version']} "
+        f"| {sources['human']['entries']} |",
+        f"| LLM generated | {sources['llm_generated']['version']} "
+        f"| {sources['llm_generated']['entries']} |",
         "",
         "## Coverage",
         "",
         f"- Missing scope (still to generate): {coverage['missing_scope_total']}",
-        f"- Confident dictionary: {coverage['confident_dictionary_total']} entries",
+        f"- Human dictionary: {coverage['human_dictionary_total']} entries",
         f"- Full dictionary: {coverage['full_dictionary_total']} entries",
         f"- CFDICT covers {coverage['cfdict_covers_cc_cedict']} CC-CEDICT entries",
-        f"- Confident LLM covers {coverage['confident_covers_cc_cedict']} CC-CEDICT entries",
-        f"- Review LLM covers {coverage['review_covers_cc_cedict']} CC-CEDICT entries",
+        f"- Human covers {coverage['human_covers_cc_cedict']} CC-CEDICT entries",
+        f"- LLM covers {coverage['llm_covers_cc_cedict']} CC-CEDICT entries",
         "",
         "## Provenance",
         "",

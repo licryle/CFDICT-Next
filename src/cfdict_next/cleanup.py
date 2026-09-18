@@ -1,11 +1,10 @@
-"""Cleanup: maintain the LLM datasets as deltas over authoritative CFDICT.
+"""Cleanup: maintain human and LLM datasets as deltas over authoritative CFDICT.
 
-Precedence (spec §9):  CFDICT > confident.json > review.json
+Precedence (spec §9):  CFDICT > human.u8 > llm_generated.json
 
 Rules:
-- Drop from confident.json any entry now present in cfdict.u8.
-- Drop from review.json any entry now present in cfdict.u8.
-- Drop from review.json any entry present in confident.json.
+- Drop from human.u8 any entry now present in cfdict.u8.
+- Drop from llm_generated.json any entry now present in cfdict.u8 or human.u8.
 
 Inputs are validated before use (spec §14): a malformed .u8 line or an
 invalid LLM record fails the run instead of silently discarding data.
@@ -25,13 +24,13 @@ from .parser.u8 import parse_u8_file
 class CleanupReport:
     """Counts describing what one cleanup run removed."""
 
-    confident_before: int
-    confident_removed_cfdict: int
-    confident_after: int
-    review_before: int
-    review_removed_cfdict: int
-    review_removed_confident: int
-    review_after: int
+    human_before: int
+    human_removed_cfdict: int
+    human_after: int
+    llm_before: int
+    llm_removed_cfdict: int
+    llm_removed_human: int
+    llm_after: int
 
 
 def cfdict_identities(cfdict_path: str | Path) -> set[str]:
@@ -43,52 +42,71 @@ def cfdict_identities(cfdict_path: str | Path) -> set[str]:
     return {entry.lexical_id() for entry in entries}
 
 
+def human_identities(human_path: str | Path) -> set[str]:
+    """Parse human.u8 and return its lexical identity set (fail on errors)."""
+    entries, errors = parse_u8_file(human_path)
+    if errors:
+        preview = "; ".join(f"line {n}: {msg}" for n, msg in errors[:5])
+        raise ValueError(f"human.u8 has {len(errors)} malformed line(s): {preview}")
+    return {entry.lexical_id() for entry in entries}
+
+
 def cleanup_datasets(
     cfdict_ids: set[str],
-    confident: dict[str, dict[str, Any]],
-    review: dict[str, dict[str, Any]],
-) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]], CleanupReport]:
-    """Apply the precedence rules; return (confident, review, report).
+    human_ids: set[str],
+    llm_generated: dict[str, dict[str, Any]],
+) -> tuple[set[str], dict[str, dict[str, Any]], CleanupReport]:
+    """Apply the precedence rules; return (human_kept, llm_kept, report).
 
     Pure function over already-loaded data — the file I/O wrapper below
     handles reading, validating, and atomically rewriting the datasets.
+    Human identities are a set (raw .u8 entries); LLM data is a mapping.
     """
-    confident_kept = {k: v for k, v in confident.items() if k not in cfdict_ids}
-    review_kept = {
+    human_kept = {k for k in human_ids if k not in cfdict_ids}
+    llm_kept = {
         k: v
-        for k, v in review.items()
-        if k not in cfdict_ids and k not in confident_kept
+        for k, v in llm_generated.items()
+        if k not in cfdict_ids and k not in human_kept
     }
     report = CleanupReport(
-        confident_before=len(confident),
-        confident_removed_cfdict=len(confident) - len(confident_kept),
-        confident_after=len(confident_kept),
-        review_before=len(review),
-        review_removed_cfdict=len([k for k in review if k in cfdict_ids]),
-        review_removed_confident=len(
-            [k for k in review if k not in cfdict_ids and k in confident_kept]
+        human_before=len(human_ids),
+        human_removed_cfdict=len(human_ids) - len(human_kept),
+        human_after=len(human_kept),
+        llm_before=len(llm_generated),
+        llm_removed_cfdict=len([k for k in llm_generated if k in cfdict_ids]),
+        llm_removed_human=len(
+            [k for k in llm_generated if k not in cfdict_ids and k in human_kept]
         ),
-        review_after=len(review_kept),
+        llm_after=len(llm_kept),
     )
-    return confident_kept, review_kept, report
+    return human_kept, llm_kept, report
 
 
 def cleanup_files(
     cfdict_path: str | Path,
-    confident_path: str | Path,
-    review_path: str | Path,
+    human_path: str | Path,
+    llm_generated_path: str | Path,
     dry_run: bool = False,
 ) -> CleanupReport:
     """Run cleanup against on-disk datasets; rewrite them unless dry_run."""
+    from .assembly import write_u8_file
     from .generation.output import write_llm_json
 
     cfdict_ids = cfdict_identities(cfdict_path)
-    confident = load_llm_json(confident_path, "confident")
-    review = load_llm_json(review_path, "review")
-    confident_kept, review_kept, report = cleanup_datasets(
-        cfdict_ids, confident, review
+    human_entries, human_errors = parse_u8_file(human_path)
+    if human_errors:
+        preview = "; ".join(f"line {n}: {msg}" for n, msg in human_errors[:5])
+        raise ValueError(
+            f"human.u8 has {len(human_errors)} malformed line(s): {preview}"
+        )
+    human_ids = {e.lexical_id() for e in human_entries}
+    llm_generated = load_llm_json(llm_generated_path)
+    human_kept, llm_kept, report = cleanup_datasets(
+        cfdict_ids, human_ids, llm_generated
     )
     if not dry_run:
-        write_llm_json(confident_path, confident_kept)
-        write_llm_json(review_path, review_kept)
+        # Retain original human file order for kept entries.
+        kept_entries = [e for e in human_entries if e.lexical_id() in human_kept]
+        write_u8_file(human_path, kept_entries)
+        write_llm_json(llm_generated_path, llm_kept)
     return report

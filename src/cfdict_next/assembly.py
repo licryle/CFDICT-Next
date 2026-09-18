@@ -1,13 +1,14 @@
 """Dictionary assembly (spec §10, §14).
 
-Precedence:  CFDICT > confident.json > review.json
+Precedence:  CFDICT > human.u8 > llm_generated.json
 
-- The confident dictionary contains CFDICT + confident.json (§10.1).
-- The full dictionary additionally contains review.json (§10.2).
-- CFDICT always wins: `assemble` *raises* on any CFDICT∩LLM or
-  confident∩review overlap instead of silently overriding (§14). Run the
-  cleanup script first so the LLM datasets are proper deltas; Phase 9
-  validation gates the workflow before assembly runs.
+- The human dictionary contains CFDICT + human.u8 (§10.1).
+- The full dictionary additionally contains llm_generated.json (§10.2).
+- Higher-priority sources always win: `assemble` *raises* on any
+  CFDICT∩human, CFDICT∩LLM or human∩LLM overlap instead of silently
+  overriding (§14). Run the cleanup script first so the datasets are
+  proper deltas; Phase 9 validation gates the workflow before assembly
+  runs.
 - Output order is deterministic: CFDICT file order, then LLM-only entries
   sorted by identity — so identical inputs always yield byte-identical
   outputs.
@@ -55,54 +56,53 @@ CFDICT_SECTION_HEADER = (
     "# CFDICT Authoritative entries "
     "(from https://chine.in/mandarin/dictionnaire/CFDICT/)"
 )
-CONFIDENT_SECTION_HEADER = (
-    "# LLM-Generated entries with HIGH confidence or human reviewed"
-)
-REVIEW_SECTION_HEADER = (
-    "# LLM-Generated entries with LOW confidence or human reviewed"
-)
+HUMAN_SECTION_HEADER = "# Human-curated entries (data/human.u8)"
+LLM_SECTION_HEADER = "# LLM-Generated entries (data/llm_generated.json)"
 
 
 def assemble_sections(
     cfdict_entries: list[DictionaryEntry],
-    confident: dict[str, dict[str, Any]],
-    review: dict[str, dict[str, Any]],
+    human_entries: list[DictionaryEntry],
+    llm_generated: dict[str, dict[str, Any]],
 ) -> tuple[list[DictionaryEntry], list[DictionaryEntry], list[DictionaryEntry]]:
-    """Split assembly into (cfdict, confident_extra, review_extra).
+    """Split assembly into (cfdict, human_extra, llm_extra).
 
     Same overlap checks as `assemble`; the extra lists preserve output
-    order (CFDICT file order, then LLM-only entries sorted by identity).
+    order (CFDICT file order, then human file order, then LLM-only
+    entries sorted by identity).
     """
     cfdict_ids = {e.lexical_id() for e in cfdict_entries}
-    bad_confident = sorted(set(confident) & cfdict_ids)
-    if bad_confident:
+    human_ids = [e.lexical_id() for e in human_entries]
+    if len(set(human_ids)) != len(human_ids):
+        raise ValueError("human.u8 contains duplicate entries — fix the source first")
+    bad_human = sorted(set(human_ids) & cfdict_ids)
+    if bad_human:
         raise ValueError(
-            f"{len(bad_confident)} confident record(s) overlap CFDICT, e.g. "
-            f"{bad_confident[0]!r} — run cleanup first"
+            f"{len(bad_human)} human record(s) overlap CFDICT, e.g. "
+            f"{bad_human[0]!r} — run cleanup first"
         )
-    bad_review = sorted((set(review) & cfdict_ids) | (set(review) & set(confident)))
-    if bad_review:
+    bad_llm = sorted((set(llm_generated) & cfdict_ids) | (set(llm_generated) & set(human_ids)))
+    if bad_llm:
         raise ValueError(
-            f"{len(bad_review)} review record(s) overlap CFDICT/confident, e.g. "
-            f"{bad_review[0]!r} — run cleanup first"
+            f"{len(bad_llm)} LLM record(s) overlap CFDICT/human, e.g. "
+            f"{bad_llm[0]!r} — run cleanup first"
         )
-    confident_extra = [
-        record_to_entry(key, confident[key]) for key in sorted(confident)
+    llm_extra = [
+        record_to_entry(key, llm_generated[key]) for key in sorted(llm_generated)
     ]
-    review_extra = [record_to_entry(key, review[key]) for key in sorted(review)]
-    return list(cfdict_entries), confident_extra, review_extra
+    return list(cfdict_entries), list(human_entries), llm_extra
 
 
 def assemble(
     cfdict_entries: list[DictionaryEntry],
-    confident: dict[str, dict[str, Any]],
-    review: dict[str, dict[str, Any]],
+    human_entries: list[DictionaryEntry],
+    llm_generated: dict[str, dict[str, Any]],
 ) -> tuple[list[DictionaryEntry], list[DictionaryEntry]]:
-    """Assemble (confident_entries, full_entries); raise on overlaps (§14)."""
-    cfdict, confident_extra, review_extra = assemble_sections(
-        cfdict_entries, confident, review
+    """Assemble (human_entries, full_entries); raise on overlaps (§14)."""
+    cfdict, human_extra, llm_extra = assemble_sections(
+        cfdict_entries, human_entries, llm_generated
     )
-    return cfdict + confident_extra, cfdict + confident_extra + review_extra
+    return cfdict + human_extra, cfdict + human_extra + llm_extra
 
 
 def write_sectioned_u8_file(
@@ -135,38 +135,43 @@ def write_u8_file(path: str | Path, entries: list[DictionaryEntry]) -> None:
 
 def assemble_files(
     cfdict_path: str | Path,
-    confident_path: str | Path,
-    review_path: str | Path,
-    out_confident_path: str | Path,
+    human_path: str | Path,
+    llm_generated_path: str | Path,
+    out_human_path: str | Path,
     out_full_path: str | Path,
 ) -> tuple[int, int]:
-    """Full assembly from on-disk sources; return (confident_n, full_n)."""
+    """Full assembly from on-disk sources; return (human_n, full_n)."""
     entries, errors = parse_u8_file(cfdict_path)
     if errors:
         preview = "; ".join(f"line {n}: {msg}" for n, msg in errors[:5])
         raise ValueError(f"cfdict.u8 has {len(errors)} malformed line(s): {preview}")
-    confident = load_llm_json(confident_path, "confident")
-    review = load_llm_json(review_path, "review")
-    cfdict, confident_extra, review_extra = assemble_sections(
-        entries, confident, review
+    human_entries, human_errors = parse_u8_file(human_path)
+    if human_errors:
+        preview = "; ".join(f"line {n}: {msg}" for n, msg in human_errors[:5])
+        raise ValueError(
+            f"human.u8 has {len(human_errors)} malformed line(s): {preview}"
+        )
+    llm_generated = load_llm_json(llm_generated_path)
+    cfdict, human_extra, llm_extra = assemble_sections(
+        entries, human_entries, llm_generated
     )
     write_sectioned_u8_file(
-        out_confident_path,
+        out_human_path,
         [
             (CFDICT_SECTION_HEADER, cfdict),
-            (CONFIDENT_SECTION_HEADER, confident_extra),
+            (HUMAN_SECTION_HEADER, human_extra),
         ],
     )
     write_sectioned_u8_file(
         out_full_path,
         [
             (CFDICT_SECTION_HEADER, cfdict),
-            (CONFIDENT_SECTION_HEADER, confident_extra),
-            (REVIEW_SECTION_HEADER, review_extra),
+            (HUMAN_SECTION_HEADER, human_extra),
+            (LLM_SECTION_HEADER, llm_extra),
         ],
     )
-    confident_n = len(cfdict) + len(confident_extra)
-    return confident_n, confident_n + len(review_extra)
+    human_n = len(cfdict) + len(human_extra)
+    return human_n, human_n + len(llm_extra)
 
 
 def iter_output_lines(path: str | Path):

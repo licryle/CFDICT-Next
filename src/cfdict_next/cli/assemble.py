@@ -1,12 +1,12 @@
-"""Assembly CLI: build the confident and full .u8 dictionaries (spec §10).
+"""Assembly CLI: build the human and full .u8 dictionaries (spec §10).
 
 Usage:
-    python scripts/assemble.py [--cfdict PATH] [--confident PATH] [--review PATH]
-                               [--out-confident PATH] [--out-full PATH]
+    python scripts/assemble.py [--cfdict PATH] [--human PATH] [--llm-generated PATH]
+                                [--out-human PATH] [--out-full PATH]
 
 Inputs must already satisfy the precedence rules (run scripts/cleanup.py
-and validation first): any CFDICT∩LLM or confident∩review overlap fails
-the run instead of silently overriding (spec §14).
+and validation first): any CFDICT∩human, CFDICT∩LLM or human∩LLM overlap
+fails the run instead of silently overriding (spec §14).
 """
 
 from __future__ import annotations
@@ -22,21 +22,26 @@ from ..assembly import assemble_files
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cfdict", default="data/cfdict.u8")
-    parser.add_argument("--confident", default="data/confident.json")
-    parser.add_argument("--review", default="data/review.json")
-    parser.add_argument("--out-confident", default="output/cfdict-next-confident.u8")
+    parser.add_argument("--human", default="data/human.u8")
+    parser.add_argument("--llm-generated", default="data/llm_generated.json")
+    parser.add_argument("--out-human", default="output/cfdict-next-human.u8")
+    parser.add_argument("--out-confident", default=None)
     parser.add_argument("--out-full", default="output/cfdict-next-full.u8")
     args = parser.parse_args(argv)
 
+    out_human = args.out_human or args.out_confident
+    if out_human is None:
+        print("assembly failed: --out-human is required", file=sys.stderr)
+        return 1
     try:
-        confident_n, full_n = assemble_files(
-            args.cfdict, args.confident, args.review,
-            args.out_confident, args.out_full,
+        human_n, full_n = assemble_files(
+            args.cfdict, args.human, args.llm_generated,
+            out_human, args.out_full,
         )
     except (ValueError, OSError) as exc:
         print(f"assembly failed: {exc}", file=sys.stderr)
         return 1
-    print(f"assembly done: confident {confident_n} entries -> {args.out_confident}, "
+    print(f"assembly done: human {human_n} entries -> {out_human}, "
           f"full {full_n} entries -> {args.out_full}")
     return 0
 

@@ -2,16 +2,17 @@
 
 An actively maintained Chinese–French dictionary. CFDICT stays the
 authoritative source for French definitions; coverage is expanded to
-CC-CEDICT scope with LLM-generated French for the missing entries.
-Precedence throughout: CFDICT > confident generated > review generated.
+CC-CEDICT scope with human-curated and LLM-generated French for the
+missing entries.
+Precedence throughout: CFDICT > human.u8 > llm_generated.json.
 
 Each [release](https://github.com/licryle/CFDICT-Next/releases) publishes
 two dictionaries:
 
 | file | contains |
 |---|---|
-| `cfdict-next-confident.u8` | CFDICT + reliable generated additions (conservative choice) |
-| `cfdict-next-full.u8` | everything above + entries still pending review (maximum coverage) |
+| `cfdict-next-human.u8` | CFDICT + human-curated additions (conservative choice) |
+| `cfdict-next-full.u8` | everything above + LLM-generated coverage (maximum coverage) |
 
 ## License
 
@@ -39,19 +40,20 @@ Contributions are French dictionary content, and the process is narrow on
 purpose:
 
 1. **Fork** this repository.
-2. **Edit `data/confident.json`** — add or fix French definitions. Keep
-   one record per entry (`traditional|simplified|pinyin` key), one sense
-   per CC-CEDICT gloss, and leave every provenance field intact
-   (`llm_model`, `prompt_version`, dates, versions).
+2. **Edit `data/human.u8`** — add or fix French definitions, one entry per
+   line (`traditional simplified [pinyin] /définition1/définition2/.../`).
+   No gloss-count check: human French is free-form. Validation only checks
+   that, when CC-CEDICT knows the word, the traditional/simplified pair
+   and pinyin match a CC-CEDICT reading.
 3. **Check locally**: `python -m pytest -q` and
-   `python scripts/validate.py` must pass — validation rejects dropped
-   or invented glosses and verdict/filename mismatches.
+   `python scripts/validate.py` must pass — validation rejects overlapping
+   identities and hanzi/pinyin mismatches against CC-CEDICT.
 4. Open a **pull request**. Merging to `main` triggers validation,
    assembly, and a new timestamped release automatically.
 
-Unverified generated entries live in `data/review.json`. Promoting one
-means verifying its French against the *Chinese* sense, moving the record
-to `confident.json` unchanged, and running the same checks.
+LLM-generated entries live in `data/llm_generated.json` (machine output,
+structural gates only). Correcting one means adding the fixed entry to
+`data/human.u8` — cleanup then drops the superseded LLM record.
 
 ## Using the dictionaries
 
@@ -89,10 +91,10 @@ Assembly refuses overlapping inputs instead of overriding them:
 
 ```
 CFDICT-Next/
-├── data/                 # cfdict.u8, confident.json, review.json, cc-cedict/ + README provenance
+├── data/                 # cfdict.u8, human.u8, llm_generated.json, cc-cedict/ + README provenance
 ├── src/cfdict_next/      # importable package (parser, generation, cli, assembly, validation, ...)
 ├── scripts/              # thin shims resolving to src/cfdict_next/cli/* (same names)
-├── schemas/              # single normative LLM record schema + thin file wrappers
+├── schemas/              # single normative LLM record schema + thin file wrapper
 ├── docs/                 # specs, workflow, update procedures, maintenance checklist
 ├── plan/                 # implementation plan + specification source (specifications.md)
 ├── tests/                # test files + fixtures

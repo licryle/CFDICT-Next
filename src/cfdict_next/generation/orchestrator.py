@@ -2,7 +2,7 @@
 
 Orchestrates the Phase 5 pipeline end to end over real sources:
 
-1. Parse CFDICT + CC-CEDICT, load the LLM datasets (all fail-loud).
+1. Parse CFDICT + human.u8 + CC-CEDICT, load the LLM dataset (all fail-loud).
 2. Compute the missing scope (spec §3, §5) and build one item per entry
    with its full CC-CEDICT gloss list.
 3. Generate in batches; every successful batch is merged and written
@@ -12,8 +12,8 @@ Orchestrates the Phase 5 pipeline end to end over real sources:
    (poison isolation). Transport and envelope failures still retry the
    whole batch; keys failing after the retry pass raise GenerationError
    (successes are already on disk, so a re-run resumes the rest).
-5. Stamp provenance, split by confidence, merge into the existing files
-   (key collisions refused), rewrite atomically per write.
+5. Stamp provenance, merge into the existing file (key collisions
+   refused), rewrite atomically per write.
 
 Safety: `limit` caps entries per run (default 20) — a full-scope run
 requires passing limit=0 explicitly. `dry_run` plans without touching
@@ -82,8 +82,7 @@ class GenerationReport:
     """Outcome of an orchestrator run."""
 
     plan: GenerationPlan
-    confident_new: int
-    review_new: int
+    llm_new: int
     dry_run: bool
 
 
@@ -127,14 +126,11 @@ def generate_all(
     provenance: Provenance,
     generation_date: str | None = None,
     post: Callable[..., Any] = post_chat_completions,
-    on_batch: Callable[
-        [dict[str, dict[str, Any]], dict[str, dict[str, Any]]], None
-    ]
-    | None = None,
+    on_batch: Callable[[dict[str, dict[str, Any]]], None] | None = None,
     progress: bool = True,
     stream: Any | None = None,
-) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]], tuple[str, ...]]:
-    """Generate all items in batches; return (confident, review, failed, causes).
+) -> tuple[dict[str, dict[str, Any]], tuple[str, ...], dict[str, str]]:
+    """Generate all items in batches; return (records, failed, causes).
 
     `failed` holds the persistently failing keys; `causes` maps each of them
     to a one-line error summary (also printed on its FAILED status line).
@@ -185,19 +181,15 @@ def generate_all(
             flush=True,
         )
 
-    confident: dict[str, dict[str, Any]] = {}
-    review: dict[str, dict[str, Any]] = {}
+    records: dict[str, dict[str, Any]] = {}
 
     def _absorb(results: list[GenerationResult]) -> None:
         nonlocal done
-        new_confident, new_review = build_records(
-            results, provenance, generation_date
-        )
-        confident.update(new_confident)
-        review.update(new_review)
-        done += len(new_confident) + len(new_review)
+        new_records = build_records(results, provenance, generation_date)
+        records.update(new_records)
+        done += len(new_records)
         if on_batch is not None:
-            on_batch(new_confident, new_review)
+            on_batch(new_records)
 
     deferred: list[GenerationItem] = []
     for index, chunk in enumerate(batched(items, config.batch_size), start=1):
@@ -246,14 +238,14 @@ def generate_all(
         errors -= 1
         if progress:
             _status(f"Retry {index}/{len(deferred)}", "succeeded")
-    return confident, review, tuple(failed_keys), causes
+    return records, tuple(failed_keys), causes
 
 
 def generate_files(
     cfdict_path: str | Path,
     cc_cedict_path: str | Path,
-    confident_path: str | Path,
-    review_path: str | Path,
+    human_path: str | Path,
+    llm_generated_path: str | Path,
     config: LLMConfig,
     cc_cedict_version: str,
     limit: int = 20,
@@ -271,41 +263,39 @@ def generate_files(
         raise ValueError(
             f"CC-CEDICT has {len(errors)} malformed line(s): {preview}"
         )
-    confident = load_llm_json(confident_path, "confident")
-    review = load_llm_json(review_path, "review")
+    human_entries, human_errors = parse_u8_file(human_path)
+    if human_errors:
+        preview = "; ".join(f"line {n}: {msg}" for n, msg in human_errors[:5])
+        raise ValueError(
+            f"human.u8 has {len(human_errors)} malformed line(s): {preview}"
+        )
+    human_ids = {e.lexical_id() for e in human_entries}
+    llm_generated = load_llm_json(llm_generated_path)
 
     items = compute_missing_items(
-        cc_entries, cfdict_ids, set(confident) | set(review)
+        cc_entries, cfdict_ids, human_ids | set(llm_generated)
     )
     plan = plan_generation(items, config.batch_size, limit)
     if dry_run:
-        return GenerationReport(
-            plan=plan, confident_new=0, review_new=0, dry_run=True
-        )
+        return GenerationReport(plan=plan, llm_new=0, dry_run=True)
 
     limited = items if limit <= 0 else items[:limit]
     provenance = Provenance(
         cc_cedict_version=cc_cedict_version, llm_model=config.model
     )
 
-    def _persist(
-        new_confident: dict[str, dict[str, Any]],
-        new_review: dict[str, dict[str, Any]],
-    ) -> None:
-        """Merge one successful batch into the datasets and rewrite both files.
+    def _persist(new_records: dict[str, dict[str, Any]]) -> None:
+        """Merge one successful batch into the dataset and rewrite the file.
 
         Per-batch writes (each atomic via temp file + rename) mean a later
         failure keeps earlier progress on disk; the next run's missing-scope
         computation skips everything already written.
         """
-        merged_confident = merge_records(confident, new_confident)
-        merged_review = merge_records(review, new_review)
-        write_llm_json(confident_path, merged_confident)
-        write_llm_json(review_path, merged_review)
-        confident.update(new_confident)
-        review.update(new_review)
+        merged = merge_records(llm_generated, new_records)
+        write_llm_json(llm_generated_path, merged)
+        llm_generated.update(new_records)
 
-    new_confident, new_review, failed_keys, causes = generate_all(
+    new_records, failed_keys, causes = generate_all(
         limited, config, provenance, generation_date, post,
         on_batch=_persist, progress=progress, stream=stream,
     )
@@ -316,12 +306,7 @@ def generate_files(
         raise GenerationError(
             f"{len(failed_keys)} entr{'y' if len(failed_keys) == 1 else 'ies'} "
             f"failed after retry, e.g. {failed_keys[0]!r} — "
-            f"{len(new_confident) + len(new_review)} succeeded and were "
+            f"{len(new_records)} succeeded and were "
             f"written; re-run resumes the rest. Causes: {shown}"
         )
-    return GenerationReport(
-        plan=plan,
-        confident_new=len(new_confident),
-        review_new=len(new_review),
-        dry_run=False,
-    )
+    return GenerationReport(plan=plan, llm_new=len(new_records), dry_run=False)

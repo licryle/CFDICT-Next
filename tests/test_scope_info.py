@@ -17,10 +17,10 @@ def sources(**overrides):
         "cc_cedict_ids": {"A", "B", "C", "D"},
         "cfdict_version": "cfdict-v1",
         "cfdict_ids": {"A"},
-        "confident_version": "llm-c1",
-        "confident_ids": {"B"},
-        "review_version": "llm-r1",
-        "review_ids": {"C"},
+        "human_version": "human-v1",
+        "human_ids": {"B"},
+        "llm_generated_version": "llm-v1",
+        "llm_generated_ids": {"C"},
         "llm_models": ("m1",),
         "prompt_versions": ("p1",),
     }
@@ -33,11 +33,11 @@ def test_scope_info_matches_exact_inputs():
     assert info["generated_at"] == "2025-01-01T00:00:00+00:00"
     assert info["sources"]["cc_cedict"] == {"version": "cc-v1", "entries": 4}
     assert info["sources"]["cfdict"] == {"version": "cfdict-v1", "entries": 1}
-    assert info["sources"]["llm_confident"] == {"version": "llm-c1", "entries": 1}
-    assert info["sources"]["llm_review"] == {"version": "llm-r1", "entries": 1}
+    assert info["sources"]["human"] == {"version": "human-v1", "entries": 1}
+    assert info["sources"]["llm_generated"] == {"version": "llm-v1", "entries": 1}
     assert info["provenance"] == {"llm_models": ["m1"], "prompt_versions": ["p1"]}
     assert info["coverage"]["missing_scope_total"] == 1  # D only
-    assert info["coverage"]["confident_dictionary_total"] == 2
+    assert info["coverage"]["human_dictionary_total"] == 2
     assert info["coverage"]["full_dictionary_total"] == 3
 
 
@@ -46,8 +46,8 @@ def test_markdown_contains_figures_and_versions():
         build_scope_info(sources(), generated_at="T")
     )
     for needle in (
-        "cc-v1", "cfdict-v1", "llm-c1", "llm-r1",
-        "Confident dictionary: 2 entries",
+        "cc-v1", "cfdict-v1", "human-v1", "llm-v1",
+        "Human dictionary: 2 entries",
         "Full dictionary: 3 entries",
         "Missing scope (still to generate): 1",
         "LLM models: m1",
@@ -59,12 +59,12 @@ def test_markdown_contains_figures_and_versions():
 def test_empty_llm_data_renders_na_provenance():
     info = build_scope_info(
         sources(
-            confident_ids=set(), review_ids=set(),
+            human_ids={"B"}, llm_generated_ids=set(),
             llm_models=(), prompt_versions=(),
         )
     )
-    assert info["coverage"]["confident_dictionary_total"] == 1
-    assert info["coverage"]["full_dictionary_total"] == 1
+    assert info["coverage"]["human_dictionary_total"] == 2
+    assert info["coverage"]["full_dictionary_total"] == 2
     markdown = render_scope_markdown(info)
     assert "LLM models: n/a" in markdown
     assert "Prompt versions: n/a" in markdown
@@ -93,14 +93,14 @@ def test_sha256_file_pins_exact_bytes(tmp_path):
 def test_cli_on_real_data(tmp_path):
     from cfdict_next.cli.scope_info import main as cli_main
 
-    for name in ("c.json", "r.json"):
-        (tmp_path / name).write_text("{}", encoding="utf-8")
+    (tmp_path / "llm.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "human.u8").write_text("", encoding="utf-8")
     out = tmp_path / "scope.md"
     rc = cli_main(
         [
             "--cfdict", "data/cfdict.u8",
-            "--confident", str(tmp_path / "c.json"),
-            "--review", str(tmp_path / "r.json"),
+            "--human", str(tmp_path / "human.u8"),
+            "--llm-generated", str(tmp_path / "llm.json"),
             "--cc-cedict", "data/cc-cedict/cedict_1_0_ts_utf-8_mdbg.txt.gz",
             "--out", str(out),
         ]
